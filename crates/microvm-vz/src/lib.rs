@@ -3,7 +3,8 @@
 //! Virtualization.framework bindings for microvm.
 
 mod error;
+mod ffi;
 mod machine;
 
 pub use error::VzError;
-pub use machine::{VmConfig, VmInstance, VmObs, VmPhase, VmProtocol};
+pub use machine::{VmConfig, VmInstance, VmPhase};
