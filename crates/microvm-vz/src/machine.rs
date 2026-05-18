@@ -20,6 +20,7 @@ pub struct VmConfig {
     pub kernel: PathBuf,
     pub kernel_cmdline: Vec<String>,
     pub rootfs: PathBuf,
+    pub nested_virt: bool,
 }
 
 impl VmConfig {
@@ -106,6 +107,7 @@ mod tests {
             kernel: PathBuf::from(kernel),
             kernel_cmdline: vec![],
             rootfs: PathBuf::from(rootfs),
+            nested_virt: false,
         }
     }
 

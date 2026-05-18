@@ -33,6 +33,9 @@ struct BootArgs {
     cpus: u32,
     #[arg(short, long, default_value_t = 512)]
     memory: u32,
+    /// Expose nested virtualization (/dev/kvm) to the guest.
+    #[arg(long)]
+    virtualization: bool,
 }
 
 impl Cli {
@@ -54,6 +57,7 @@ async fn boot(args: BootArgs) -> Result<()> {
         kernel: args.kernel,
         kernel_cmdline: kernel_cmdline(args.cmdline),
         rootfs: args.rootfs,
+        nested_virt: args.virtualization,
     })?;
 
     println!("booting: {} cpus, {} MiB", args.cpus, args.memory);

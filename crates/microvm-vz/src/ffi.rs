@@ -124,6 +124,14 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
         vz_config.setBootLoader(Some(&boot_loader));
 
         let platform = VZGenericPlatformConfiguration::new();
+        if config.nested_virt {
+            if !VZGenericPlatformConfiguration::isNestedVirtualizationSupported() {
+                return Err(VzError::InvalidConfig(
+                    "nested virtualization not supported on this hardware".into(),
+                ));
+            }
+            platform.setNestedVirtualizationEnabled(true);
+        }
         vz_config.setPlatform(&platform);
 
         let entropy = VZVirtioEntropyDeviceConfiguration::new();
