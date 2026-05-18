@@ -36,6 +36,9 @@ struct BootArgs {
     /// Expose nested virtualization (/dev/kvm) to the guest.
     #[arg(long)]
     virtualization: bool,
+    /// Save a VM checkpoint after boot (golden snapshot).
+    #[arg(long)]
+    checkpoint: Option<PathBuf>,
 }
 
 impl Cli {
@@ -63,6 +66,14 @@ async fn boot(args: BootArgs) -> Result<()> {
     println!("booting: {} cpus, {} MiB", args.cpus, args.memory);
     vm.start().await?;
     println!("vm started, press ctrl-c to stop");
+
+    if let Some(ref path) = args.checkpoint {
+        println!("saving checkpoint to {}...", path.display());
+        // Wait a beat for the VM to stabilize before snapshotting.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        vm.checkpoint(path).await?;
+        println!("checkpoint saved");
+    }
 
     tokio::signal::ctrl_c().await?;
     println!("stopping...");

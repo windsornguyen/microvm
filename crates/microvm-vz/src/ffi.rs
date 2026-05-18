@@ -75,8 +75,39 @@ impl VzHandle {
 
     pub async fn stop(&self) -> Result<(), VzError> {
         self.with_completion("stop", |vm, block| {
-            // SAFETY: `with_completion` executes this call on the VM queue.
             unsafe { vm.stopWithCompletionHandler(block) };
+        })
+        .await
+    }
+
+    pub async fn pause(&self) -> Result<(), VzError> {
+        self.with_completion("pause", |vm, block| {
+            unsafe { vm.pauseWithCompletionHandler(block) };
+        })
+        .await
+    }
+
+    pub async fn resume(&self) -> Result<(), VzError> {
+        self.with_completion("resume", |vm, block| {
+            unsafe { vm.resumeWithCompletionHandler(block) };
+        })
+        .await
+    }
+
+    pub async fn save_state(&self, path: &Path) -> Result<(), VzError> {
+        let url_path = path_string(path)?;
+        self.with_completion("save_state", move |vm, block| {
+            let url = nsurl_from_str(&url_path);
+            unsafe { vm.saveMachineStateToURL_completionHandler(&url, block) };
+        })
+        .await
+    }
+
+    pub async fn restore_state(&self, path: &Path) -> Result<(), VzError> {
+        let url_path = path_string(path)?;
+        self.with_completion("restore_state", move |vm, block| {
+            let url = nsurl_from_str(&url_path);
+            unsafe { vm.restoreMachineStateFromURL_completionHandler(&url, block) };
         })
         .await
     }

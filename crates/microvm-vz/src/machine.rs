@@ -94,6 +94,31 @@ impl VmInstance {
         self.handle = None;
         Ok(())
     }
+
+    /// Pause -> save state -> resume. VM keeps running after.
+    pub async fn checkpoint(&self, path: &std::path::Path) -> Result<(), VzError> {
+        let handle = self.require_handle()?;
+        handle.pause().await?;
+        handle.save_state(path).await?;
+        handle.resume().await?;
+        Ok(())
+    }
+
+    /// Pause -> restore state -> resume.
+    pub async fn restore(&self, path: &std::path::Path) -> Result<(), VzError> {
+        let handle = self.require_handle()?;
+        handle.pause().await?;
+        handle.restore_state(path).await?;
+        handle.resume().await?;
+        Ok(())
+    }
+
+    fn require_handle(&self) -> Result<&VzHandle, VzError> {
+        self.handle.as_ref().ok_or(VzError::InvalidState {
+            expected: "running",
+            actual: "stopped",
+        })
+    }
 }
 
 #[cfg(test)]

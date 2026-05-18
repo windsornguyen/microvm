@@ -43,7 +43,7 @@ objc2-virtualization = { version = "0.3", features = [
 block2 = { version = "0.6", features = ["std"] }
 
 # Async runtime
-tokio = { version = "1", features = ["rt", "signal", "sync"] }
+tokio = { version = "1", features = ["rt", "signal", "sync", "time"] }
 
 # CLI
 clap = { version = "4", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
