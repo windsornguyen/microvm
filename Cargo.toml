@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/windsornguyen/microvm"
@@ -45,6 +45,9 @@ block2 = { version = "0.6", features = ["std"] }
 # Async runtime
 tokio = { version = "1", features = ["rt", "signal", "sync"] }
 
+# CLI
+clap = { version = "4", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+
 # Error handling
 thiserror = "2"
 anyhow = "1"
@@ -65,3 +68,4 @@ microvm-vz.workspace = true
 tokio.workspace = true
 core-foundation.workspace = true
 anyhow.workspace = true
+clap.workspace = true

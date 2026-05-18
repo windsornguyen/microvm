@@ -5,9 +5,10 @@
 mod cli;
 
 use anyhow::Result;
+use clap::Parser;
 
 fn main() -> Result<()> {
-    let cli = cli::Cli::parse()?;
+    let cli = cli::Cli::parse();
 
     // The main thread must pump CFRunLoop for Virtualization.framework.
     // Spawn async work on a background thread, use the main thread's

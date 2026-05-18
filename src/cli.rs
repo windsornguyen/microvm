@@ -2,88 +2,49 @@
 
 //! Command-line entrypoints for the minimal VM runner.
 
-use std::env;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
 use microvm_vz::{VmConfig, VmInstance};
 
-pub enum Cli {
+#[derive(Parser)]
+#[command(name = "microvm", version, about = "Lightweight macOS microVM runner")]
+pub struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
     Boot(BootArgs),
     Version,
 }
 
-pub struct BootArgs {
+#[derive(Args)]
+struct BootArgs {
+    #[arg(short, long)]
     kernel: PathBuf,
+    #[arg(short, long)]
     rootfs: PathBuf,
+    #[arg(long)]
     cmdline: Vec<String>,
+    #[arg(short, long, default_value_t = 2)]
     cpus: u32,
+    #[arg(short, long, default_value_t = 512)]
     memory: u32,
 }
 
 impl Cli {
-    pub fn parse() -> Result<Self> {
-        parse_args(env::args().skip(1))
-    }
-
     pub async fn run(self) -> Result<()> {
-        match self {
-            Self::Boot(args) => boot(args).await,
-            Self::Version => {
+        match self.command {
+            Command::Boot(args) => boot(args).await,
+            Command::Version => {
                 println!("microvm {}", env!("CARGO_PKG_VERSION"));
                 Ok(())
             }
         }
     }
-}
-
-fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Cli> {
-    let mut args = args.into_iter();
-    match args.next().as_deref() {
-        Some("boot") => BootArgs::parse(args).map(Cli::Boot),
-        Some("version" | "--version" | "-V") => Ok(Cli::Version),
-        Some(command) => bail!("unknown command: {command}\n{}", usage()),
-        None => bail!("{}", usage()),
-    }
-}
-
-impl BootArgs {
-    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
-        let mut args = args.into_iter();
-        let mut boot = BootBuilder::default();
-
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "-k" | "--kernel" => {
-                    boot.kernel = Some(PathBuf::from(next_value(&mut args, &arg)?))
-                }
-                "-r" | "--rootfs" => {
-                    boot.rootfs = Some(PathBuf::from(next_value(&mut args, &arg)?))
-                }
-                "--cmdline" => boot.cmdline.push(next_value(&mut args, &arg)?),
-                "-c" | "--cpus" => boot.cpus = Some(parse_u32(&mut args, &arg)?),
-                "-m" | "--memory" => boot.memory = Some(parse_u32(&mut args, &arg)?),
-                _ => bail!("unknown boot argument: {arg}\n{}", usage()),
-            }
-        }
-
-        Ok(Self {
-            kernel: boot.kernel.context("missing --kernel")?,
-            rootfs: boot.rootfs.context("missing --rootfs")?,
-            cmdline: boot.cmdline,
-            cpus: boot.cpus.unwrap_or(2),
-            memory: boot.memory.unwrap_or(512),
-        })
-    }
-}
-
-#[derive(Default)]
-struct BootBuilder {
-    kernel: Option<PathBuf>,
-    rootfs: Option<PathBuf>,
-    cmdline: Vec<String>,
-    cpus: Option<u32>,
-    memory: Option<u32>,
 }
 
 async fn boot(args: BootArgs) -> Result<()> {
@@ -106,17 +67,6 @@ async fn boot(args: BootArgs) -> Result<()> {
     Ok(())
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
-    args.next()
-        .with_context(|| format!("missing value for {flag}"))
-}
-
-fn parse_u32(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u32> {
-    next_value(args, flag)?
-        .parse()
-        .with_context(|| format!("invalid value for {flag}"))
-}
-
 fn kernel_cmdline(extra: Vec<String>) -> Vec<String> {
     [
         "console=hvc0".to_owned(),
@@ -130,28 +80,26 @@ fn kernel_cmdline(extra: Vec<String>) -> Vec<String> {
     .collect()
 }
 
-fn usage() -> &'static str {
-    "usage: microvm boot --kernel <path> --rootfs <path> [--cmdline <arg>] [-c cpus] [-m mib]\n       microvm version"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn parses_boot_command() {
-        let cli = parse_args([
-            "boot".to_owned(),
-            "--kernel".to_owned(),
-            "vmlinuz".to_owned(),
-            "--rootfs".to_owned(),
-            "rootfs.ext4".to_owned(),
-            "--cmdline".to_owned(),
-            "panic=1".to_owned(),
+        let cli = Cli::try_parse_from([
+            "microvm",
+            "boot",
+            "--kernel",
+            "vmlinuz",
+            "--rootfs",
+            "rootfs.ext4",
+            "--cmdline",
+            "panic=1",
         ])
         .unwrap();
 
-        let Cli::Boot(args) = cli else {
+        let Command::Boot(args) = cli.command else {
             panic!("expected boot command");
         };
         assert_eq!(args.kernel, PathBuf::from("vmlinuz"));
@@ -163,13 +111,6 @@ mod tests {
 
     #[test]
     fn rejects_missing_rootfs() {
-        assert!(
-            parse_args([
-                "boot".to_owned(),
-                "--kernel".to_owned(),
-                "vmlinuz".to_owned()
-            ])
-            .is_err()
-        );
+        assert!(Cli::try_parse_from(["microvm", "boot", "--kernel", "vmlinuz"]).is_err());
     }
 }
