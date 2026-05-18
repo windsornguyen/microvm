@@ -7,12 +7,18 @@ Uses Apple's Virtualization.framework to boot Linux VMs directly -- no Docker De
 ## Install
 
 ```
+curl -fsSL https://raw.githubusercontent.com/windsornguyen/microvm/main/install.sh | sh
+```
+
+Or a specific version: `curl -fsSL ... | sh -s v0.1.0`
+
+**From source:**
+
+```
 cargo build --release
 codesign --sign - --entitlements entitlements.plist --force target/release/microvm
 cp target/release/microvm ~/.local/bin/microvm
 ```
-
-Or: `./scripts/install.sh`
 
 The codesign step is required. Virtualization.framework needs the `com.apple.security.virtualization` entitlement.
 
