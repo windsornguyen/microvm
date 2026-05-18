@@ -1,0 +1,124 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/microvm-vz",
+    "crates/microvm-oci",
+    "crates/microvm-runtime",
+    "crates/microvm-net",
+    ".",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/windsornguyen/microvm"
+
+[workspace.dependencies]
+# Virtualization.framework bindings
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSError", "NSURL", "NSString", "NSData", "NSArray"] }
+objc2-virtualization = { version = "0.3", features = [
+    "std",
+    "VZVirtualMachine",
+    "VZVirtualMachineConfiguration",
+    "VZVirtualMachineStartOptions",
+    "VZLinuxBootLoader",
+    "VZGenericPlatformConfiguration",
+    "VZGenericMachineIdentifier",
+    "VZDiskImageStorageDeviceAttachment",
+    "VZDiskSynchronizationMode",
+    "VZVirtioBlockDeviceConfiguration",
+    "VZVirtioNetworkDeviceConfiguration",
+    "VZNATNetworkDeviceAttachment",
+    "VZVirtioSocketDeviceConfiguration",
+    "VZVirtioSocketDevice",
+    "VZVirtioSocketConnection",
+    "VZVirtioSocketListener",
+    "VZVirtioEntropyDeviceConfiguration",
+    "VZVirtioFileSystemDeviceConfiguration",
+    "VZVirtioConsoleDeviceConfiguration",
+    "VZVirtioConsoleDeviceSerialPortConfiguration",
+    "VZVirtioTraditionalMemoryBalloonDeviceConfiguration",
+    "VZFileHandleSerialPortAttachment",
+    "VZFileSerialPortAttachment",
+    "VZMemoryBalloonDeviceConfiguration",
+    "VZNetworkDeviceAttachment",
+    "VZNetworkDeviceConfiguration",
+    "VZStorageDeviceConfiguration",
+    "VZStorageDeviceAttachment",
+    "VZSerialPortAttachment",
+    "VZSerialPortConfiguration",
+    "VZError",
+    "VZDefines",
+    "VZMACAddress",
+    "VZSingleDirectoryShare",
+    "VZMultipleDirectoryShare",
+    "VZSharedDirectory",
+    "VZDirectoryShare",
+] }
+block2 = "0.6"
+
+# OCI image + registry
+oci-client = "0.16"
+oci-spec = "0.9"
+
+# Archive handling
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Filesystem / OS
+rustix = { version = "1", features = ["fs", "process", "pipe", "net", "event"] }
+tempfile = "3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+bytes = "1"
+
+# Internal crates
+microvm-vz = { path = "crates/microvm-vz" }
+microvm-oci = { path = "crates/microvm-oci" }
+microvm-runtime = { path = "crates/microvm-runtime" }
+microvm-net = { path = "crates/microvm-net" }
+
+[package]
+name = "microvm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+microvm-vz.workspace = true
+microvm-oci.workspace = true
+microvm-runtime.workspace = true
+microvm-net.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
