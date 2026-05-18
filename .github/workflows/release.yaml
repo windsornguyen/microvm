@@ -27,8 +27,11 @@ jobs:
           cp target/release/microvm dist/
           cp entitlements.plist dist/
           cd dist && tar czf ../microvm-darwin-arm64.tar.gz .
+          shasum -a 256 ../microvm-darwin-arm64.tar.gz | cut -d' ' -f1 > ../microvm-darwin-arm64.tar.gz.sha256
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: microvm-darwin-arm64.tar.gz
+          files: |
+            microvm-darwin-arm64.tar.gz
+            microvm-darwin-arm64.tar.gz.sha256
