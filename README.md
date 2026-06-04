@@ -25,10 +25,39 @@ The codesign step is required. Virtualization.framework needs the `com.apple.sec
 ## Usage
 
 ```
-microvm boot --kernel <path> --rootfs <path> [--cpus N] [--memory MiB] [--virtualization]
+microvm boot --kernel <path> --rootfs <path> [--cpus N] [--memory MiB] [--virtualization] [--checkpoint <path>]
 ```
 
 `--virtualization` exposes `/dev/kvm` to the guest (nested virtualization).
+
+`--checkpoint` pauses a running VM after boot, writes a machine-state file, then resumes it.
+
+## Status
+
+`microvm` is alpha: a thin Rust CLI over Apple's Virtualization.framework for Linux microVMs on Apple Silicon.
+
+Today it:
+
+- Boots an ARM64 Linux kernel with an ext4 rootfs.
+- Wires serial console, entropy, NAT, vsock, virtio block, and optional nested virtualization.
+- Can checkpoint a running VM after boot.
+- Has low-level restore bindings, but no supported restore command yet.
+
+The constraint is deliberate: use the primary Apple API directly. If the framework cannot do the thing, fail with a typed error. No shadow VMM, no silent mode switch.
+
+## Roadmap
+
+The central hypothesis is that cold boot should become the rare path. Initialize once, checkpoint the useful machine state, then restore it cheaply and correctly.
+
+- Snapshot/restore: persist the machine identifier with each checkpoint, expose `microvm restore`, enforce stopped -> restoring -> paused -> running, and publish cold-boot vs restore numbers.
+- Fast substrate: keep kernel/rootfs minimal, document required config, capture boot logs, and track time to first vsock connection.
+- Guest agent: replace shell boot with a tiny vsock control plane for exec, signals, stdio, exit status, and lifecycle events.
+- Storage: add virtiofs shares, copy-on-write rootfs creation, and explicit disk cache/sync modes.
+- Network: graduate from NAT-only to vmnet-backed addresses, with explicit DNS and port semantics.
+- OCI: pull an image, materialize a rootfs, and run its process, no Docker Desktop or shared Linux daemon.
+- Accounting: report CPU, memory, disk, and network usage, including the framework's memory-balloon limits.
+
+Non-goals for now: macOS guests, GUI devices, Docker API compatibility, and non-Apple VMM backends.
 
 ## Getting a kernel
 
