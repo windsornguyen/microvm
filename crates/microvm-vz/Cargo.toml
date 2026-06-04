@@ -4,6 +4,7 @@ description = "Virtualization.framework bindings for microvm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 objc2.workspace = true
