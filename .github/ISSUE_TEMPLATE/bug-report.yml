@@ -1,0 +1,75 @@
+name: Bug Report
+description: Report a bug (prefer Linear for internal tracking)
+labels:
+  - bug
+  - needs triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > We primarily track issues in **Linear**. If you haven't already, create the issue there first and link it below.
+
+  - type: input
+    id: linear
+    attributes:
+      label: Linear Issue
+      description: Link to the Linear issue, or "N/A" if not yet created.
+      placeholder: "https://linear.app/dedalus-labs/issue/..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What's the bug? Include error messages if applicable.
+      placeholder: "Describe the issue clearly and concisely."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps or code to reproduce the bug.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - CLI
+        - VZ
+        - Install
+        - Release
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Development (local)
+        - Preview
+        - Production
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Branch, commit hash, screenshots, logs, etc.
