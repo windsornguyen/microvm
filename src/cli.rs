@@ -35,7 +35,7 @@ struct BootArgs {
     memory: u32,
     /// Expose nested virtualization (/dev/kvm) to the guest.
     #[arg(long)]
-    virtualization: bool,
+    nested_virt: bool,
     /// Save a VM checkpoint after boot (golden snapshot).
     #[arg(long)]
     checkpoint: Option<PathBuf>,
@@ -60,7 +60,7 @@ async fn boot(args: BootArgs) -> Result<()> {
         kernel: args.kernel,
         kernel_cmdline: kernel_cmdline(args.cmdline),
         rootfs: args.rootfs,
-        nested_virt: args.virtualization,
+        nested_virt: args.nested_virt,
     })?;
 
     println!("booting: {} cpus, {} MiB", args.cpus, args.memory);
@@ -122,6 +122,42 @@ mod tests {
         assert_eq!(args.cmdline, vec!["panic=1"]);
         assert_eq!(args.cpus, 2);
         assert_eq!(args.memory, 512);
+        assert!(!args.nested_virt);
+    }
+
+    #[test]
+    fn parses_nested_virt_flag() {
+        let cli = Cli::try_parse_from([
+            "microvm",
+            "boot",
+            "--kernel",
+            "vmlinuz",
+            "--rootfs",
+            "rootfs.ext4",
+            "--nested-virt",
+        ])
+        .unwrap();
+
+        let Command::Boot(args) = cli.command else {
+            panic!("expected boot command");
+        };
+        assert!(args.nested_virt);
+    }
+
+    #[test]
+    fn rejects_old_virtualization_flag() {
+        assert!(
+            Cli::try_parse_from([
+                "microvm",
+                "boot",
+                "--kernel",
+                "vmlinuz",
+                "--rootfs",
+                "rootfs.ext4",
+                "--virtualization",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

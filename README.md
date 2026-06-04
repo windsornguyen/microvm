@@ -25,10 +25,10 @@ The codesign step is required. Virtualization.framework needs the `com.apple.sec
 ## Usage
 
 ```
-microvm boot --kernel <path> --rootfs <path> [--cpus N] [--memory MiB] [--virtualization] [--checkpoint <path>]
+microvm boot --kernel <path> --rootfs <path> [--cpus N] [--memory MiB] [--nested-virt] [--checkpoint <path>]
 ```
 
-`--virtualization` exposes `/dev/kvm` to the guest (nested virtualization).
+`--nested-virt` exposes `/dev/kvm` to the guest.
 
 `--checkpoint` pauses a running VM after boot, writes a machine-state file, then resumes it.
 
@@ -106,14 +106,14 @@ container run --rm -v /tmp:/mnt ubuntu:24.04 bash -c 'mkfs.ext4 /mnt/rootfs.ext4
 
 ## /dev/kvm on macOS
 
-Boot with `--virtualization` and a KVM-capable kernel (Ubuntu generic arm64 works):
+Boot with `--nested-virt` and a KVM-capable kernel (Ubuntu generic arm64 works):
 
 ```
 microvm boot \
   --kernel /tmp/kernel/vmlinux \
   --rootfs ~/Library/Application\ Support/com.apple.container/snapshots/<digest>/snapshot \
   --cpus 2 --memory 1024 \
-  --virtualization
+  --nested-virt
 ```
 
 The guest will have `/dev/kvm` available. Requires Apple Silicon and macOS 26+.
