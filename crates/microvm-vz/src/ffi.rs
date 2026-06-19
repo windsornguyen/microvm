@@ -11,13 +11,15 @@ use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_foundation::{NSArray, NSError, NSFileHandle, NSString, NSURL};
 use objc2_virtualization::{
-    VZDiskImageCachingMode, VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
+    VZDirectoryShare, VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
+    VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
     VZFileHandleSerialPortAttachment, VZGenericPlatformConfiguration, VZLinuxBootLoader,
     VZNATNetworkDeviceAttachment, VZNetworkDeviceAttachment, VZSerialPortAttachment,
-    VZStorageDeviceAttachment, VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
+    VZSharedDirectory, VZSingleDirectoryShare, VZStorageDeviceAttachment,
+    VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
     VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioEntropyDeviceConfiguration,
-    VZVirtioNetworkDeviceConfiguration, VZVirtioSocketDeviceConfiguration, VZVirtualMachine,
-    VZVirtualMachineConfiguration,
+    VZVirtioFileSystemDeviceConfiguration, VZVirtioNetworkDeviceConfiguration,
+    VZVirtioSocketDeviceConfiguration, VZVirtualMachine, VZVirtualMachineConfiguration,
 };
 
 use crate::VzError;
@@ -138,8 +140,6 @@ impl VzHandle {
 
 fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfiguration>, VzError> {
     let kernel_url = nsurl_from_path(&config.kernel)?;
-    let rootfs_url = nsurl_from_path(&config.rootfs)?;
-
     // SAFETY: All objects are freshly allocated Objective-C configuration
     // values. The arrays are retained before being copied into `vz_config`.
     unsafe {
@@ -200,31 +200,85 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
             net_dev,
         )]));
 
-        let disk: Retained<VZDiskImageStorageDeviceAttachment> =
-            VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
-                VZDiskImageStorageDeviceAttachment::alloc(),
-                &rootfs_url,
-                false,
-                VZDiskImageCachingMode::Automatic,
-                VZDiskImageSynchronizationMode::Full,
-            ).map_err(|e| VzError::Framework {
-                operation: "disk_attach",
-                message: e.localizedDescription().to_string(),
-            })?;
-        let disk_base: Retained<VZStorageDeviceAttachment> = Retained::into_super(disk);
-        let block_dev = VZVirtioBlockDeviceConfiguration::initWithAttachment(
-            VZVirtioBlockDeviceConfiguration::alloc(),
-            &disk_base,
-        );
-        let block_as_storage: Retained<VZStorageDeviceConfiguration> =
-            Retained::into_super(block_dev);
-        vz_config.setStorageDevices(&NSArray::from_retained_slice(&[block_as_storage]));
+        let mut storage_devices = Vec::with_capacity(1 + config.disks.len());
+        storage_devices.push(block_device(&config.rootfs, false, None)?);
+        for disk in &config.disks {
+            storage_devices.push(block_device(
+                &disk.path,
+                disk.read_only,
+                disk.serial.as_deref(),
+            )?);
+        }
+        vz_config.setStorageDevices(&NSArray::from_retained_slice(&storage_devices));
+
+        let mut directory_shares: Vec<Retained<VZDirectorySharingDeviceConfiguration>> =
+            Vec::with_capacity(config.shares.len());
+        for share in &config.shares {
+            let tag = NSString::from_str(&share.tag);
+            VZVirtioFileSystemDeviceConfiguration::validateTag_error(&tag)
+                .map_err(|e| VzError::InvalidConfig(e.localizedDescription().to_string()))?;
+            let host_url = nsurl_from_path(&share.host_path)?;
+            let directory = VZSharedDirectory::initWithURL_readOnly(
+                VZSharedDirectory::alloc(),
+                &host_url,
+                share.read_only,
+            );
+            let single = VZSingleDirectoryShare::initWithDirectory(
+                VZSingleDirectoryShare::alloc(),
+                &directory,
+            );
+            let single_base: Retained<VZDirectoryShare> = Retained::into_super(single);
+            let device = VZVirtioFileSystemDeviceConfiguration::initWithTag(
+                VZVirtioFileSystemDeviceConfiguration::alloc(),
+                &tag,
+            );
+            device.setShare(Some(&single_base));
+            directory_shares.push(Retained::into_super(device));
+        }
+        if !directory_shares.is_empty() {
+            vz_config.setDirectorySharingDevices(&NSArray::from_retained_slice(&directory_shares));
+        }
 
         vz_config
             .validateWithError()
             .map_err(|e| VzError::InvalidConfig(e.localizedDescription().to_string()))?;
 
         Ok(vz_config)
+    }
+}
+
+fn block_device(
+    path: &Path,
+    read_only: bool,
+    serial: Option<&str>,
+) -> Result<Retained<VZStorageDeviceConfiguration>, VzError> {
+    let url = nsurl_from_path(path)?;
+    // SAFETY: The URL is a validated file URL, the attachment and block
+    // configuration are fresh Objective-C objects, and the returned retained
+    // storage configuration is copied into the VM configuration before use.
+    unsafe {
+        let disk = VZDiskImageStorageDeviceAttachment::initWithURL_readOnly_cachingMode_synchronizationMode_error(
+            VZDiskImageStorageDeviceAttachment::alloc(),
+            &url,
+            read_only,
+            VZDiskImageCachingMode::Automatic,
+            VZDiskImageSynchronizationMode::Full,
+        ).map_err(|e| VzError::Framework {
+            operation: "disk_attach",
+            message: e.localizedDescription().to_string(),
+        })?;
+        let disk_base: Retained<VZStorageDeviceAttachment> = Retained::into_super(disk);
+        let block_dev = VZVirtioBlockDeviceConfiguration::initWithAttachment(
+            VZVirtioBlockDeviceConfiguration::alloc(),
+            &disk_base,
+        );
+        if let Some(serial) = serial {
+            let serial = NSString::from_str(serial);
+            VZVirtioBlockDeviceConfiguration::validateBlockDeviceIdentifier_error(&serial)
+                .map_err(|e| VzError::InvalidConfig(e.localizedDescription().to_string()))?;
+            block_dev.setBlockDeviceIdentifier(&serial);
+        }
+        Ok(Retained::into_super(block_dev))
     }
 }
 

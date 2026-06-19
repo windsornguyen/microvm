@@ -17,29 +17,9 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSError", "NSURL", "NSString", "NSArray", "NSFileHandle"] }
 dispatch2 = { version = "0.3", features = ["alloc"] }
 
-objc2-virtualization = { version = "0.3", features = [
-    "std",
-    "VZVirtualMachine",
-    "VZVirtualMachineConfiguration",
-    "VZLinuxBootLoader",
-    "VZGenericPlatformConfiguration",
-    "VZDiskImageStorageDeviceAttachment",
-    "VZVirtioBlockDeviceConfiguration",
-    "VZVirtioNetworkDeviceConfiguration",
-    "VZNATNetworkDeviceAttachment",
-    "VZVirtioSocketDeviceConfiguration",
-    "VZVirtioEntropyDeviceConfiguration",
-    "VZVirtioConsoleDeviceSerialPortConfiguration",
-    "VZFileHandleSerialPortAttachment",
-    "VZNetworkDeviceAttachment",
-    "VZNetworkDeviceConfiguration",
-    "VZStorageDeviceConfiguration",
-    "VZStorageDeviceAttachment",
-    "VZSerialPortAttachment",
-    "VZSerialPortConfiguration",
-    "block2",
-    "dispatch2",
-] }
+# Keep default features enabled: objc2-virtualization's default set is the
+# complete generated binding surface for Apple's Virtualization.framework.
+objc2-virtualization = "0.3"
 block2 = { version = "0.6", features = ["std"] }
 
 # Async runtime

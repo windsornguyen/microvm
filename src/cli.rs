@@ -60,6 +60,8 @@ async fn boot(args: BootArgs) -> Result<()> {
         kernel: args.kernel,
         kernel_cmdline: kernel_cmdline(args.cmdline),
         rootfs: args.rootfs,
+        disks: vec![],
+        shares: vec![],
         nested_virt: args.nested_virt,
     })?;
 
