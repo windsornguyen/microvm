@@ -4,7 +4,8 @@
 
 **Do not open public issues for security vulnerabilities.**
 
-Email security reports to: [win@dedaluslabs.ai](mailto:win@dedaluslabs.ai)
+Use GitHub's private vulnerability reporting:
+[Report a vulnerability](https://github.com/windsornguyen/microvm/security/advisories/new)
 
 Include:
 

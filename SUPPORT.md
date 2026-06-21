@@ -31,7 +31,7 @@ Include:
 
 **Do NOT open public issues for security vulnerabilities.**
 
-Email [win@dedaluslabs.ai](mailto:win@dedaluslabs.ai). See [SECURITY.md](SECURITY.md).
+[Report privately via GitHub](https://github.com/windsornguyen/microvm/security/advisories/new). See [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
