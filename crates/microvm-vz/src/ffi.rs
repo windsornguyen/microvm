@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Windsor Nguyen. All rights reserved.
 
 //! Async wrappers around Virtualization.framework's callback-based API.
+//!
+//! This module is the sole FFI boundary with Objective-C. Every function
+//! here touches raw Objective-C pointers and dispatch queues.
+#![allow(unsafe_code, unreachable_pub, clippy::expect_used)]
 
 use std::path::Path;
 use std::sync::Mutex;

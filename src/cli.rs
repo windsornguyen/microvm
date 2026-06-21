@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Windsor Nguyen. All rights reserved.
 
 //! Command-line entrypoints for the minimal VM runner.
+// CLI binary: stdout/stderr output is the primary user interface.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::path::PathBuf;
 
@@ -16,7 +18,7 @@ const STOP_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Parser)]
 #[command(name = "microvm", version, about = "Lightweight macOS microVM runner")]
-pub struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
 }
@@ -63,7 +65,7 @@ struct RestoreArgs {
 // --- public entrypoints ---
 
 impl Cli {
-    pub async fn run(self) -> Result<()> {
+    pub(crate) async fn run(self) -> Result<()> {
         match self.command {
             Command::Boot(args) => boot(args).await,
             Command::Restore(args) => restore(args).await,
@@ -236,6 +238,8 @@ fn kernel_cmdline(extra: Vec<String>) -> Vec<String> {
 }
 
 #[cfg(test)]
+// Tests assert on success/failure; unwrap is the idiomatic assertion mechanism.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use clap::Parser;

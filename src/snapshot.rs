@@ -73,7 +73,7 @@ struct SnapshotResource {
 
 impl SnapshotConfig {
     #[must_use]
-    pub fn from_vm_config(config: &VmConfig) -> Self {
+    pub(crate) fn from_vm_config(config: &VmConfig) -> Self {
         Self {
             cpus: config.cpus,
             memory_bytes: config.memory_bytes,
@@ -103,7 +103,7 @@ impl SnapshotConfig {
         }
     }
 
-    pub fn to_vm_config(&self) -> Result<VmConfig> {
+    pub(crate) fn to_vm_config(&self) -> Result<VmConfig> {
         Ok(VmConfig {
             cpus: self.cpus,
             memory_bytes: self.memory_bytes,
@@ -327,6 +327,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         use std::fmt::Write;
+        #[allow(clippy::expect_used)] // write to String is infallible
         write!(&mut out, "{byte:02x}").expect("write to String");
     }
     out
@@ -354,6 +355,8 @@ fn hex_nibble(byte: u8) -> Result<u8> {
 }
 
 #[cfg(test)]
+// Tests assert on success/failure; unwrap is the idiomatic assertion mechanism.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

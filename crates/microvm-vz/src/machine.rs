@@ -99,6 +99,8 @@ impl VmConfig {
 
     #[must_use]
     pub fn machine_identifier(&self) -> &[u8] {
+        // VmInstance::new unconditionally populates this before returning.
+        #[allow(clippy::expect_used)]
         self.machine_identifier
             .as_ref()
             .expect("VmConfig always has a machine identifier after VmInstance::new")
@@ -239,6 +241,8 @@ impl VmPhase {
 }
 
 #[cfg(test)]
+// Tests assert on success/failure; unwrap is the idiomatic assertion mechanism.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Windsor Nguyen. All rights reserved.
 
 //! Binary entrypoint and main-thread run loop pump.
+// CFRunLoop FFI is inherently unsafe; startup expect is fail-fast.
+#![allow(unsafe_code)]
 
 mod cli;
 mod snapshot;
@@ -17,6 +19,7 @@ fn main() -> Result<()> {
     let (done_tx, done_rx) = std::sync::mpsc::channel::<Result<()>>();
 
     std::thread::spawn(move || {
+        #[allow(clippy::expect_used)] // startup: fail fast if tokio can't init
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
