@@ -1,19 +1,10 @@
 ---
 name: Question
-about: Ask a question (prefer Linear or Slack for internal discussion)
+about: Ask a question
 title: ''
 labels: question
 assignees: ''
 ---
-
-> [!NOTE]
-> For internal questions, prefer **Linear** or **Slack**. Use this for questions that benefit from public visibility.
-
-## Linear Issue
-
-*Link to Linear issue if this relates to tracked work, or "N/A".*
-
-[Delete and type here].
 
 ## Question
 
