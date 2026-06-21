@@ -1,27 +1,12 @@
 {
-  "name": "microvm",
-  "version": "1.0.0",
-  "description": "microvm",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/windsornguyen/microvm.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/windsornguyen/microvm/issues"
-  },
-  "homepage": "https://github.com/windsornguyen/microvm#readme",
-  "devDependencies": {
-    "@dedalus-labs/hollywood": "^0.0.1-alpha.1"
-  }
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "node --experimental-strip-types scripts/bundle-actions.ts",
+		"generate": "hollywood generate gha/*.ts"
+	},
+	"devDependencies": {
+		"@dedalus-labs/hollywood": "^0.0.1-alpha.1",
+		"esbuild": "^0.25.0"
+	}
 }

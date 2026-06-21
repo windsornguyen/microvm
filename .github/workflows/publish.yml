@@ -8,6 +8,8 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 jobs:
   release-please:
     name: Release Please
@@ -39,11 +41,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish microvm-vz
-        run: cargo publish -p microvm-vz --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Publish microvm
-        run: cargo publish -p microvm --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Publish crates to crates.io
+        uses: ./.github/actions/publish-crates
+        with:
+          token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
