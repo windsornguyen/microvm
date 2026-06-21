@@ -1,0 +1,12 @@
+{
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"actions": "node --experimental-strip-types gha/bundle.ts",
+		"generate": "hollywood generate gha/*.ts"
+	},
+	"devDependencies": {
+		"@dedalus-labs/hollywood": "^0.0.1-alpha.1",
+		"esbuild": "^0.25.0"
+	}
+}
