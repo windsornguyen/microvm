@@ -5,8 +5,25 @@ members = [
     ".",
 ]
 
+[workspace.lints.rust]
+unsafe_code = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -2 }
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+get_unwrap = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+
 [workspace.package]
-version = "0.0.1"
+version = "0.0.1-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/windsornguyen/microvm"
@@ -17,29 +34,9 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSError", "NSURL", "NSString", "NSArray", "NSFileHandle"] }
 dispatch2 = { version = "0.3", features = ["alloc"] }
 
-objc2-virtualization = { version = "0.3", features = [
-    "std",
-    "VZVirtualMachine",
-    "VZVirtualMachineConfiguration",
-    "VZLinuxBootLoader",
-    "VZGenericPlatformConfiguration",
-    "VZDiskImageStorageDeviceAttachment",
-    "VZVirtioBlockDeviceConfiguration",
-    "VZVirtioNetworkDeviceConfiguration",
-    "VZNATNetworkDeviceAttachment",
-    "VZVirtioSocketDeviceConfiguration",
-    "VZVirtioEntropyDeviceConfiguration",
-    "VZVirtioConsoleDeviceSerialPortConfiguration",
-    "VZFileHandleSerialPortAttachment",
-    "VZNetworkDeviceAttachment",
-    "VZNetworkDeviceConfiguration",
-    "VZStorageDeviceConfiguration",
-    "VZStorageDeviceAttachment",
-    "VZSerialPortAttachment",
-    "VZSerialPortConfiguration",
-    "block2",
-    "dispatch2",
-] }
+# Keep default features enabled: objc2-virtualization's default set is the
+# complete generated binding surface for Apple's Virtualization.framework.
+objc2-virtualization = "0.3"
 block2 = { version = "0.6", features = ["std"] }
 
 # Async runtime
@@ -51,17 +48,26 @@ clap = { version = "4", default-features = false, features = ["derive", "error-c
 # Error handling
 thiserror = "2"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 core-foundation = "0.10"
+sysctl = "0.6"
 
 # Internal crates
-microvm-vz = { path = "crates/microvm-vz" }
+microvm-vz = { path = "crates/microvm-vz", version = "0.0.1-alpha.1" }
 
 [package]
 name = "microvm"
+description = "Lightweight macOS microVM launcher built on Apple's Virtualization.framework"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
 
 [dependencies]
 microvm-vz.workspace = true
@@ -69,3 +75,6 @@ tokio.workspace = true
 core-foundation.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysctl.workspace = true

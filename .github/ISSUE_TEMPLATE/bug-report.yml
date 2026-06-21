@@ -1,0 +1,51 @@
+name: Bug Report
+description: Report a bug
+labels:
+  - bug
+  - needs triage
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What's the bug? Include error messages if applicable.
+      placeholder: "Describe the issue clearly and concisely."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps or code to reproduce the bug.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - CLI
+        - VZ
+        - Install
+        - Release
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: macOS version, hardware, logs, screenshots, etc.
