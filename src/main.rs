@@ -3,6 +3,7 @@
 //! Binary entrypoint and main-thread run loop pump.
 
 mod cli;
+mod snapshot;
 
 use anyhow::Result;
 use clap::Parser;
@@ -37,7 +38,7 @@ fn main() -> Result<()> {
             core_foundation::runloop::CFRunLoopRunInMode(
                 core_foundation::runloop::kCFRunLoopDefaultMode,
                 0.1,
-                false as u8,
+                u8::from(false),
             );
         }
         if let Ok(result) = done_rx.try_recv() {

@@ -9,13 +9,13 @@ use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::AnyThread;
 use objc2::rc::Retained;
-use objc2_foundation::{NSArray, NSError, NSFileHandle, NSString, NSURL};
+use objc2_foundation::{NSArray, NSData, NSError, NSFileHandle, NSString, NSURL};
 use objc2_virtualization::{
     VZDirectoryShare, VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
     VZDiskImageStorageDeviceAttachment, VZDiskImageSynchronizationMode,
-    VZFileHandleSerialPortAttachment, VZGenericPlatformConfiguration, VZLinuxBootLoader,
-    VZNATNetworkDeviceAttachment, VZNetworkDeviceAttachment, VZSerialPortAttachment,
-    VZSharedDirectory, VZSingleDirectoryShare, VZStorageDeviceAttachment,
+    VZFileHandleSerialPortAttachment, VZGenericMachineIdentifier, VZGenericPlatformConfiguration,
+    VZLinuxBootLoader, VZNATNetworkDeviceAttachment, VZNetworkDeviceAttachment,
+    VZSerialPortAttachment, VZSharedDirectory, VZSingleDirectoryShare, VZStorageDeviceAttachment,
     VZStorageDeviceConfiguration, VZVirtioBlockDeviceConfiguration,
     VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioEntropyDeviceConfiguration,
     VZVirtioFileSystemDeviceConfiguration, VZVirtioNetworkDeviceConfiguration,
@@ -53,8 +53,16 @@ unsafe impl Sync for VzHandle {}
 
 impl VzHandle {
     pub fn new(config: &VmConfig) -> Result<Self, VzError> {
+        Self::new_with_save_restore(config, false)
+    }
+
+    pub fn new_save_restore(config: &VmConfig) -> Result<Self, VzError> {
+        Self::new_with_save_restore(config, true)
+    }
+
+    fn new_with_save_restore(config: &VmConfig, save_restore: bool) -> Result<Self, VzError> {
         let queue = DispatchQueue::new("com.microvm.vz", DispatchQueueAttr::SERIAL);
-        let vz_config = build_vz_config(config)?;
+        let vz_config = build_vz_config(config, save_restore)?;
         // SAFETY: `queue` is serial, and all later VM operations are submitted
         // through the same queue.
         let vm = unsafe {
@@ -133,12 +141,20 @@ impl VzHandle {
             vm.submit(submit, &block);
         });
 
-        rx.await
-            .map_err(|_| VzError::CompletionDropped { operation })?
+        rx.await.map_err(|_| VzError::CompletionDropped { operation })?
     }
 }
 
-fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfiguration>, VzError> {
+pub(crate) fn new_machine_identifier() -> Vec<u8> {
+    // SAFETY: Allocates a fresh VZGenericMachineIdentifier and immediately
+    // copies its opaque byte representation into Rust-owned memory.
+    unsafe { VZGenericMachineIdentifier::new().dataRepresentation().as_bytes_unchecked().to_vec() }
+}
+
+fn build_vz_config(
+    config: &VmConfig,
+    save_restore: bool,
+) -> Result<Retained<VZVirtualMachineConfiguration>, VzError> {
     let kernel_url = nsurl_from_path(&config.kernel)?;
     // SAFETY: All objects are freshly allocated Objective-C configuration
     // values. The arrays are retained before being copied into `vz_config`.
@@ -155,6 +171,8 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
         vz_config.setBootLoader(Some(&boot_loader));
 
         let platform = VZGenericPlatformConfiguration::new();
+        let machine_identifier = machine_identifier(config.machine_identifier())?;
+        platform.setMachineIdentifier(&machine_identifier);
         if config.nested_virt {
             if !VZGenericPlatformConfiguration::isNestedVirtualizationSupported() {
                 return Err(VzError::InvalidConfig(
@@ -166,9 +184,8 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
         vz_config.setPlatform(&platform);
 
         let entropy = VZVirtioEntropyDeviceConfiguration::new();
-        vz_config.setEntropyDevices(&NSArray::from_retained_slice(&[Retained::into_super(
-            entropy,
-        )]));
+        vz_config
+            .setEntropyDevices(&NSArray::from_retained_slice(&[Retained::into_super(entropy)]));
 
         // Wire serial console to process stdin/stdout.
         let stdin_handle = NSFileHandle::fileHandleWithStandardInput();
@@ -183,31 +200,22 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
             Retained::into_super(serial_attachment);
         let serial = VZVirtioConsoleDeviceSerialPortConfiguration::new();
         serial.setAttachment(Some(&serial_attachment));
-        vz_config.setSerialPorts(&NSArray::from_retained_slice(&[Retained::into_super(
-            serial,
-        )]));
+        vz_config.setSerialPorts(&NSArray::from_retained_slice(&[Retained::into_super(serial)]));
 
         let socket = VZVirtioSocketDeviceConfiguration::new();
-        vz_config.setSocketDevices(&NSArray::from_retained_slice(&[Retained::into_super(
-            socket,
-        )]));
+        vz_config.setSocketDevices(&NSArray::from_retained_slice(&[Retained::into_super(socket)]));
 
         let net_dev = VZVirtioNetworkDeviceConfiguration::new();
         let nat = VZNATNetworkDeviceAttachment::new();
         let nat: Retained<VZNetworkDeviceAttachment> = Retained::into_super(nat);
         net_dev.setAttachment(Some(&nat));
-        vz_config.setNetworkDevices(&NSArray::from_retained_slice(&[Retained::into_super(
-            net_dev,
-        )]));
+        vz_config
+            .setNetworkDevices(&NSArray::from_retained_slice(&[Retained::into_super(net_dev)]));
 
         let mut storage_devices = Vec::with_capacity(1 + config.disks.len());
         storage_devices.push(block_device(&config.rootfs, false, None)?);
         for disk in &config.disks {
-            storage_devices.push(block_device(
-                &disk.path,
-                disk.read_only,
-                disk.serial.as_deref(),
-            )?);
+            storage_devices.push(block_device(&disk.path, disk.read_only, disk.serial.as_deref())?);
         }
         vz_config.setStorageDevices(&NSArray::from_retained_slice(&storage_devices));
 
@@ -242,9 +250,27 @@ fn build_vz_config(config: &VmConfig) -> Result<Retained<VZVirtualMachineConfigu
         vz_config
             .validateWithError()
             .map_err(|e| VzError::InvalidConfig(e.localizedDescription().to_string()))?;
+        if save_restore {
+            vz_config
+                .validateSaveRestoreSupportWithError()
+                .map_err(|e| VzError::InvalidConfig(e.localizedDescription().to_string()))?;
+        }
 
         Ok(vz_config)
     }
+}
+
+fn machine_identifier(bytes: &[u8]) -> Result<Retained<VZGenericMachineIdentifier>, VzError> {
+    let data = NSData::with_bytes(bytes);
+    // SAFETY: Virtualization.framework validates the opaque data representation
+    // and returns nil for invalid bytes.
+    unsafe {
+        VZGenericMachineIdentifier::initWithDataRepresentation(
+            VZGenericMachineIdentifier::alloc(),
+            &data,
+        )
+    }
+    .ok_or_else(|| VzError::InvalidConfig("invalid generic machine identifier".into()))
 }
 
 fn block_device(
@@ -288,10 +314,7 @@ fn completion_result(operation: &'static str, err: *mut NSError) -> Result<(), V
     let Some(err) = (unsafe { err.as_ref() }) else {
         return Ok(());
     };
-    Err(VzError::Framework {
-        operation,
-        message: err.localizedDescription().to_string(),
-    })
+    Err(VzError::Framework { operation, message: err.localizedDescription().to_string() })
 }
 
 fn nsurl_from_path(path: &Path) -> Result<Retained<NSURL>, VzError> {
@@ -305,7 +328,5 @@ fn nsurl_from_str(path: &str) -> Retained<NSURL> {
 fn path_string(path: &Path) -> Result<String, VzError> {
     path.to_str()
         .map(ToOwned::to_owned)
-        .ok_or_else(|| VzError::NonUtf8Path {
-            path: path.to_path_buf(),
-        })
+        .ok_or_else(|| VzError::NonUtf8Path { path: path.to_path_buf() })
 }

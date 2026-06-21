@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Windsor Nguyen. All rights reserved.
 
 //! Minimal Virtualization.framework VM lifecycle.
+//!
+//! All fallible public methods return `VzError`, which is self-documenting
+//! via its typed variants.
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use std::path::PathBuf;
 
@@ -10,6 +14,7 @@ use crate::ffi::VzHandle;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VmPhase {
     Stopped,
+    Paused,
     Running,
 }
 
@@ -23,6 +28,7 @@ pub struct VmConfig {
     pub disks: Vec<DiskAttachment>,
     pub shares: Vec<FsShare>,
     pub nested_virt: bool,
+    pub machine_identifier: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +46,7 @@ pub struct FsShare {
 }
 
 impl VmConfig {
+    /// Returns `Err` if the configuration violates hard invariants.
     pub fn validate(&self) -> Result<(), VzError> {
         if self.cpus == 0 {
             return Err(VzError::InvalidConfig("cpus must be > 0".into()));
@@ -89,79 +96,145 @@ impl VmConfig {
         }
         Ok(())
     }
+
+    #[must_use]
+    pub fn machine_identifier(&self) -> &[u8] {
+        self.machine_identifier
+            .as_ref()
+            .expect("VmConfig always has a machine identifier after VmInstance::new")
+    }
 }
 
 pub struct VmInstance {
     config: VmConfig,
     handle: Option<VzHandle>,
+    phase: VmPhase,
 }
 
 impl VmInstance {
-    pub fn new(config: VmConfig) -> Result<Self, VzError> {
+    pub fn new(mut config: VmConfig) -> Result<Self, VzError> {
+        if config.machine_identifier.is_none() {
+            config.machine_identifier = Some(crate::ffi::new_machine_identifier());
+        }
         config.validate()?;
-        Ok(Self {
-            config,
-            handle: None,
-        })
+        Ok(Self { config, handle: None, phase: VmPhase::Stopped })
     }
 
     #[must_use]
     pub fn phase(&self) -> VmPhase {
-        if self.handle.is_some() {
-            VmPhase::Running
-        } else {
-            VmPhase::Stopped
-        }
+        self.phase
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &VmConfig {
+        &self.config
     }
 
     pub async fn start(&mut self) -> Result<(), VzError> {
+        self.start_with_save_restore(false).await
+    }
+
+    pub async fn start_save_restore(&mut self) -> Result<(), VzError> {
+        self.start_with_save_restore(true).await
+    }
+
+    async fn start_with_save_restore(&mut self, save_restore: bool) -> Result<(), VzError> {
         if self.handle.is_some() {
-            return Err(VzError::InvalidState {
-                expected: "stopped",
-                actual: "running",
-            });
+            return Err(VzError::InvalidState { expected: "stopped", actual: self.phase.as_str() });
         }
 
-        let handle = VzHandle::new(&self.config)?;
+        let handle = if save_restore {
+            VzHandle::new_save_restore(&self.config)?
+        } else {
+            VzHandle::new(&self.config)?
+        };
         handle.start().await?;
         self.handle = Some(handle);
+        self.phase = VmPhase::Running;
         Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<(), VzError> {
-        let handle = self.handle.as_ref().ok_or(VzError::InvalidState {
-            expected: "running",
-            actual: "stopped",
-        })?;
+        let handle = self
+            .handle
+            .as_ref()
+            .ok_or(VzError::InvalidState { expected: "running or paused", actual: "stopped" })?;
 
         handle.stop().await?;
         self.handle = None;
+        self.phase = VmPhase::Stopped;
         Ok(())
+    }
+
+    pub async fn pause(&mut self) -> Result<(), VzError> {
+        if self.phase == VmPhase::Paused {
+            return Ok(());
+        }
+        if self.phase != VmPhase::Running {
+            return Err(VzError::InvalidState { expected: "running", actual: self.phase.as_str() });
+        }
+        let handle = self.require_handle()?;
+        handle.pause().await?;
+        self.phase = VmPhase::Paused;
+        Ok(())
+    }
+
+    pub async fn resume(&mut self) -> Result<(), VzError> {
+        if self.phase == VmPhase::Running {
+            return Ok(());
+        }
+        if self.phase != VmPhase::Paused {
+            return Err(VzError::InvalidState { expected: "paused", actual: self.phase.as_str() });
+        }
+        let handle = self.require_handle()?;
+        handle.resume().await?;
+        self.phase = VmPhase::Running;
+        Ok(())
+    }
+
+    pub async fn save_state(&mut self, path: &std::path::Path) -> Result<(), VzError> {
+        if self.phase != VmPhase::Paused {
+            return Err(VzError::InvalidState { expected: "paused", actual: self.phase.as_str() });
+        }
+        self.require_handle()?.save_state(path).await
     }
 
     /// Pause -> save state -> resume. VM keeps running after.
-    pub async fn checkpoint(&self, path: &std::path::Path) -> Result<(), VzError> {
-        let handle = self.require_handle()?;
-        handle.pause().await?;
-        handle.save_state(path).await?;
-        handle.resume().await?;
+    pub async fn checkpoint(&mut self, path: &std::path::Path) -> Result<(), VzError> {
+        if self.phase != VmPhase::Running {
+            return Err(VzError::InvalidState { expected: "running", actual: self.phase.as_str() });
+        }
+        self.pause().await?;
+        self.save_state(path).await?;
+        self.resume().await?;
         Ok(())
     }
 
-    /// Pause -> restore state -> resume.
-    pub async fn restore(&self, path: &std::path::Path) -> Result<(), VzError> {
-        let handle = self.require_handle()?;
-        handle.pause().await?;
+    /// Restore into a stopped VM. Virtualization.framework leaves it paused.
+    pub async fn restore(&mut self, path: &std::path::Path) -> Result<(), VzError> {
+        if self.handle.is_some() {
+            return Err(VzError::InvalidState { expected: "stopped", actual: self.phase.as_str() });
+        }
+        let handle = VzHandle::new_save_restore(&self.config)?;
         handle.restore_state(path).await?;
-        handle.resume().await?;
+        self.handle = Some(handle);
+        self.phase = VmPhase::Paused;
         Ok(())
     }
 
     fn require_handle(&self) -> Result<&VzHandle, VzError> {
-        self.handle.as_ref().ok_or(VzError::InvalidState {
-            expected: "running",
-            actual: "stopped",
-        })
+        self.handle.as_ref().ok_or(VzError::InvalidState { expected: "running", actual: "stopped" })
+    }
+}
+
+impl VmPhase {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Paused => "paused",
+            Self::Running => "running",
+        }
     }
 }
 
@@ -179,6 +252,7 @@ mod tests {
             disks: vec![],
             shares: vec![],
             nested_virt: false,
+            machine_identifier: None,
         }
     }
 
