@@ -2,7 +2,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "node --experimental-strip-types scripts/bundle-actions.ts",
+		"actions": "node --experimental-strip-types gha/bundle.ts",
 		"generate": "hollywood generate gha/*.ts"
 	},
 	"devDependencies": {
