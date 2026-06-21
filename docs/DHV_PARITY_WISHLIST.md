@@ -1,12 +1,13 @@
-# Wishlist: microvm as local DHV
+# Wishlist: VMM API compatibility
 
-Goal: make `microvm` a Mac-only stand-in for Dedalus Hypervisor (DHV), so the
-unmodified DCS host-agent can drive `create / sleep / wake / publish` locally.
-The win is not aesthetic. It cuts the canary-bake loop from roughly 10-15 min to
-minutes on a laptop, while keeping the same host-agent control path.
+Goal: make `microvm` expose a cloud-hypervisor-compatible HTTP API over a unix
+socket, so an external host-agent process can drive
+`create / sleep / wake / publish` locally. The win is cutting the canary-bake
+loop from ~10-15 min to minutes on a laptop, while keeping the same control
+path as the production VMM.
 
-This is the build target. Work bottom-up: VZ device parity, then the DHV control
-surface, then snapshot/restore, then a Dedalus harness.
+Work bottom-up: VZ device parity, then the VMM control surface, then
+snapshot/restore.
 
 ## Progress
 
@@ -22,32 +23,32 @@ surface, then snapshot/restore, then a Dedalus harness.
 - [x] Enable a VZ virtio socket device in the boot configuration.
 - [x] Wrap VZ pause, resume, save state, and restore state.
 - [ ] Bridge VZ vsock streams to host unix sockets.
-- [ ] Implement the DHV CLI and HTTP-over-unix-socket API.
-- [ ] Map DHV `add-fs` inputs to VZ host-directory shares without lying about
+- [ ] Implement the VMM CLI and HTTP-over-unix-socket API.
+- [ ] Map VMM `add-fs` inputs to VZ host-directory shares without lying about
   the socket semantics.
 - [ ] Add entitlement-gated integration tests where a guest observes block,
   virtiofs, and vsock devices.
-- [ ] Drive unmodified host-agent through `DHV_BINARY=microvm`.
+- [ ] Drive an external host-agent through `VMM_BINARY=microvm`.
 - [ ] Prove snapshot/restore with a pre-sleep sentinel readable after wake.
 
 ## The seam
 
-host-agent spawns DHV as:
+A host-agent spawns the VMM as:
 
 ```sh
-<dhv-binary> --api-socket <unix-path> --ready-fd <N> --event-monitor path=<file> [--restore <restore-args>]
+<vmm-binary> --api-socket <unix-path> --ready-fd <N> --event-monitor path=<file> [--restore <restore-args>]
 ```
 
 The child writes one byte to `--ready-fd` after binding the API socket. No
-polling. host-agent then talks HTTP/1.1 over the unix socket:
+polling. The host-agent then talks HTTP/1.1 over the unix socket:
 `PUT /api/v1/vm.<verb>` with JSON bodies. Non-2xx responses must return JSON,
-because host-agent surfaces `status` plus `body`.
+because the host-agent surfaces `status` plus `body`.
 
 `--restore <args>` means spawned to load a snapshot. No `--restore` means fresh
 spawn, then wait for `vm.boot` and device-add calls.
 
-Point host-agent at microvm with `DHV_BINARY=<microvm>`. Everything else should
-be unchanged.
+Point the host-agent at microvm with `VMM_BINARY=<microvm>`. Everything else
+should be unchanged.
 
 ## Phase 1: device parity in `microvm-vz`
 
@@ -78,9 +79,9 @@ DiskAttachment {
 }
 ```
 
-The guest finds cachefiles and pending-log volumes by serial under
-`/dev/disk/by-id`. `microvm-vz` sets VZ block device identifiers when `serial`
-is present and validates Apple-compatible identifiers.
+The guest finds volumes by serial under `/dev/disk/by-id`. `microvm-vz` sets VZ
+block device identifiers when `serial` is present and validates
+Apple-compatible identifiers.
 
 Missing: guest-visible integration proof.
 
@@ -96,14 +97,14 @@ FsShare {
 }
 ```
 
-The guest mounts the epoch bundle by tag. `microvm-vz` wires
-`VZVirtioFileSystemDeviceConfiguration`,
-`VZSharedDirectory`, and `VZSingleDirectoryShare`.
+The guest mounts shared directories by tag. `microvm-vz` wires
+`VZVirtioFileSystemDeviceConfiguration`, `VZSharedDirectory`, and
+`VZSingleDirectoryShare`.
 
-Missing: the DHV `FsConfig` uses a `socket` path for external `virtiofsd`, while
-VZ wants a host directory. The local harness must provide a precise mapping,
-probably by adding a Mac-only `host_path` field or deriving a directory from the
-harness context. Do not pretend the socket is a directory.
+Missing: the cloud-hypervisor `FsConfig` uses a `socket` path for external
+`virtiofsd`, while VZ wants a host directory. The local harness must provide a
+precise mapping, probably by adding a Mac-only `host_path` field or deriving a
+directory from the harness context. Do not pretend the socket is a directory.
 
 ### vsock
 
@@ -111,15 +112,12 @@ Partly done: the VZ virtio socket device is present in the boot configuration.
 
 Missing: the load-bearing bridge:
 
-- host to guest: `connect(port) -> stream` for 19090, 19091, 19092.
-- guest to host: `listen(port) -> unix socket` for 19093.
+- host to guest: `connect(port) -> stream` for RPC ports.
+- guest to host: `listen(port) -> unix socket` for service ports.
 
-Publish depends on this. The guest `dfsd` dials vsock 19093 to reach the host
-object-store broker. host-agent dials guest-runtime RPC on 19090.
+## Phase 2: VMM control surface
 
-## Phase 2: DHV control surface
-
-This can live in the current binary or a new `microvm-dhv` crate.
+This can live in the current binary or a new `microvm-vmm` crate.
 
 ### CLI
 
@@ -149,7 +147,6 @@ Implement HTTP/1.1 over the unix socket:
 | `vm.snapshot` | Phase 3 |
 | `vm.restore` | Phase 3 |
 | `vm.shutdown` / `vm.delete` | stop VM / tear down |
-| `vm.seal-record` | no-op is acceptable if explicit |
 
 VZ mostly wires devices at boot configuration time. Implement `add-fs`,
 `add-disk`, and `add-vsock` by accumulating them before `vm.boot` or
@@ -165,34 +162,14 @@ Target behavior:
 - `--restore <args>` / `vm.restore(source_url)`: restore VZ machine state from
   file, then `vm.resume` restarts vCPUs.
 
-Deferrable but important: Phase 1 plus Phase 2 already exercises the publish/CAS
-bug class, because sleep-time publish is a vsock RPC before snapshot. Real
-restore is needed for wake proof.
-
-## Phase 4: Dedalus harness
-
-Out of scope for this repo. The Dedalus repo should own a local driver that
-starts host-agent with `DHV_BINARY=microvm`, runs the object-store broker over a
-local in-memory S3, seeds a base epoch, then drives:
-
-```text
-create -> write sentinel -> sleep/publish -> wake -> read sentinel
-```
-
-The broker must enforce read-only-base scoping locally. That is the invariant
-that catches the write-to-base class canary found too late.
-
 ## Acceptance
 
 - Phase 1: entitlement-gated tests prove block-by-serial, virtiofs tag mount,
   and vsock round-trip in a guest.
-- Phase 2: unmodified host-agent can spawn microvm, boot a guest with
+- Phase 2: an unmodified host-agent can spawn microvm, boot a guest with
   virtiofs+vsock+block, and complete a create plus publish barrier.
 - Phase 3: snapshot plus restore round-trips, and a sentinel written pre-sleep
   is readable post-wake.
-- North star: local create/sleep/wake/publish runs in minutes on a Mac and
-  reproduces the `errno=-5` write-to-base and `errno=-22` CAS-conflict bug
-  classes when reintroduced.
 
 ## Notes
 
