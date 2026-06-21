@@ -1,0 +1,20 @@
+name: Vouch Request
+description: Request to become a vouched contributor
+labels:
+  - vouch
+body:
+  - type: input
+    id: handle
+    attributes:
+      label: GitHub handle
+      placeholder: "@yourusername"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Public context
+      description: Link to prior work, relevant projects, or a sponsor from an existing vouched contributor.
+    validations:
+      required: true
