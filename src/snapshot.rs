@@ -72,35 +72,44 @@ struct SnapshotResource {
 }
 
 impl SnapshotConfig {
-    #[must_use]
-    pub(crate) fn from_vm_config(config: &VmConfig) -> Self {
-        Self {
+    pub(crate) fn from_vm_config(config: &VmConfig) -> Result<Self> {
+        Ok(Self {
             cpus: config.cpus,
             memory_bytes: config.memory_bytes,
-            kernel: config.kernel.clone(),
+            kernel: fs::canonicalize(&config.kernel)
+                .with_context(|| format!("canonicalize kernel: {}", config.kernel.display()))?,
             kernel_cmdline: config.kernel_cmdline.clone(),
-            rootfs: config.rootfs.clone(),
+            rootfs: fs::canonicalize(&config.rootfs)
+                .with_context(|| format!("canonicalize rootfs: {}", config.rootfs.display()))?,
             disks: config
                 .disks
                 .iter()
-                .map(|disk| SnapshotDisk {
-                    path: disk.path.clone(),
-                    serial: disk.serial.clone(),
-                    read_only: disk.read_only,
+                .map(|disk| {
+                    Ok(SnapshotDisk {
+                        path: fs::canonicalize(&disk.path).with_context(|| {
+                            format!("canonicalize disk: {}", disk.path.display())
+                        })?,
+                        serial: disk.serial.clone(),
+                        read_only: disk.read_only,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             shares: config
                 .shares
                 .iter()
-                .map(|share| SnapshotShare {
-                    tag: share.tag.clone(),
-                    host_path: share.host_path.clone(),
-                    read_only: share.read_only,
+                .map(|share| {
+                    Ok(SnapshotShare {
+                        tag: share.tag.clone(),
+                        host_path: fs::canonicalize(&share.host_path).with_context(|| {
+                            format!("canonicalize share: {}", share.host_path.display())
+                        })?,
+                        read_only: share.read_only,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             nested_virt: config.nested_virt,
             machine_identifier_hex: hex_encode(config.machine_identifier()),
-        }
+        })
     }
 
     pub(crate) fn to_vm_config(&self) -> Result<VmConfig> {
@@ -152,7 +161,7 @@ pub(crate) async fn write(path: &Path, vm: &mut VmInstance) -> Result<()> {
     );
     let mut temp = TempDir::create(temp_path)?;
 
-    let config = SnapshotConfig::from_vm_config(vm.config());
+    let config = SnapshotConfig::from_vm_config(vm.config())?;
     write_json(&temp.path.join(CONFIG_FILE), &config)?;
     fs::write(temp.path.join(MACHINE_ID_FILE), hex_decode(&config.machine_identifier_hex)?)
         .context("write machine identifier")?;
@@ -364,18 +373,24 @@ mod tests {
 
     #[test]
     fn invariant_config_round_trips_machine_identifier() {
+        let dir = test_dir();
+        let kernel = dir.join("vmlinuz");
+        let rootfs = dir.join("rootfs.ext4");
+        fs::write(&kernel, b"kernel").unwrap();
+        fs::write(&rootfs, b"rootfs").unwrap();
+
         let config = VmConfig {
             cpus: 2,
             memory_bytes: 512 * 1024 * 1024,
-            kernel: PathBuf::from("vmlinuz"),
+            kernel,
             kernel_cmdline: vec!["panic=1".to_owned()],
-            rootfs: PathBuf::from("rootfs.ext4"),
+            rootfs,
             disks: vec![],
             shares: vec![],
             nested_virt: true,
             machine_identifier: Some(vec![1, 2, 3, 4]),
         };
-        let snapshot = SnapshotConfig::from_vm_config(&config);
+        let snapshot = SnapshotConfig::from_vm_config(&config).unwrap();
         let restored = snapshot.to_vm_config().unwrap();
 
         assert_eq!(restored.cpus, config.cpus);
@@ -423,7 +438,7 @@ mod tests {
             nested_virt: false,
             machine_identifier: Some(vec![1]),
         };
-        let config = SnapshotConfig::from_vm_config(&vm_cfg);
+        let config = SnapshotConfig::from_vm_config(&vm_cfg).unwrap();
         write_json(&dir.join(CONFIG_FILE), &config).unwrap();
         write_json(
             &dir.join(METADATA_FILE),
@@ -466,7 +481,7 @@ mod tests {
             nested_virt: false,
             machine_identifier: Some(vec![1]),
         };
-        let config = SnapshotConfig::from_vm_config(&vm_cfg);
+        let config = SnapshotConfig::from_vm_config(&vm_cfg).unwrap();
         write_json(&dir.join(CONFIG_FILE), &config).unwrap();
         write_json(
             &dir.join(METADATA_FILE),

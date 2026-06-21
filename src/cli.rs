@@ -115,10 +115,9 @@ async fn boot(args: BootArgs) -> Result<()> {
 async fn restore(args: RestoreArgs) -> Result<()> {
     let snap = snapshot::read(&args.from)?;
     if !args.force {
-        // Snapshot memory is validated against host limits; values above u32::MAX MiB
-        // (4 PiB) are not physically possible.
-        #[allow(clippy::cast_possible_truncation)]
-        let mem_mib = (snap.config.memory_bytes / (1024 * 1024)) as u32;
+        let mem_mib = u32::try_from(snap.config.memory_bytes / (1024 * 1024)).map_err(|_| {
+            anyhow::anyhow!("snapshot memory_bytes is corrupt: {} bytes", snap.config.memory_bytes)
+        })?;
         validate_resources(snap.config.cpus, mem_mib)?;
     }
     let mut vm = VmInstance::new(snap.config.to_vm_config()?)?;
