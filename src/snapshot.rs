@@ -3,6 +3,7 @@
 //! VM snapshot persistence: save and restore machine state to disk.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,11 @@ const CONFIG_FILE: &str = "config.json";
 const METADATA_FILE: &str = "metadata.json";
 const MACHINE_ID_FILE: &str = "machine-id";
 const MACHINE_STATE_FILE: &str = "machine-state";
+
+mod size_limit {
+    pub(super) const JSON_BYTES: u64 = 1024 * 1024;
+    pub(super) const MACHINE_ID_BYTES: u64 = 4096;
+}
 
 #[derive(Debug)]
 pub(crate) struct Snapshot {
@@ -72,6 +78,7 @@ struct SnapshotResource {
 }
 
 impl SnapshotConfig {
+    #[must_use = "snapshot configuration errors must be handled"]
     pub(crate) fn from_vm_config(config: &VmConfig) -> Result<Self> {
         Ok(Self {
             cpus: config.cpus,
@@ -112,6 +119,7 @@ impl SnapshotConfig {
         })
     }
 
+    #[must_use = "snapshot configuration errors must be handled"]
     pub(crate) fn to_vm_config(&self) -> Result<VmConfig> {
         Ok(VmConfig {
             cpus: self.cpus,
@@ -143,49 +151,23 @@ impl SnapshotConfig {
     }
 }
 
+/// Persist a snapshot and return the VM to its running state.
+///
+/// # Cancellation safety
+/// Not cancellation-safe; save or publish may finish after cancellation while the VM stays paused.
 pub(crate) async fn write(path: &Path, vm: &mut VmInstance) -> Result<()> {
-    ensure!(!path.exists(), "snapshot directory already exists: {}", path.display());
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .with_context(|| format!("create snapshot parent {}", parent.display()))?;
+    let destination = path.to_path_buf();
+    let vm_config = vm.config().clone();
+    let draft =
+        run_blocking("prepare snapshot", move || SnapshotDraft::prepare(destination, &vm_config))
+            .await?;
+    let state_path = draft.state_path();
 
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("snapshot path must have a UTF-8 directory name")?;
-    let temp_path = parent.join(format!(".{name}.tmp.{}", std::process::id()));
-    ensure!(
-        !temp_path.exists(),
-        "temporary snapshot directory already exists: {}",
-        temp_path.display()
-    );
-    let mut temp = TempDir::create(temp_path)?;
-
-    let config = SnapshotConfig::from_vm_config(vm.config())?;
-    write_json(&temp.path.join(CONFIG_FILE), &config)?;
-    fs::write(temp.path.join(MACHINE_ID_FILE), hex_decode(&config.machine_identifier_hex)?)
-        .context("write machine identifier")?;
-
-    let state_path = temp.path.join(MACHINE_STATE_FILE);
     vm.pause().await?;
     let result: Result<()> = async {
         vm.save_state(&state_path).await?;
-        let metadata = SnapshotMetadata {
-            schema_version: SCHEMA_VERSION,
-            microvm_version: env!("CARGO_PKG_VERSION").to_owned(),
-            created_unix_secs: unix_secs(SystemTime::now())?,
-            host_arch: std::env::consts::ARCH.to_owned(),
-            host_os: std::env::consts::OS.to_owned(),
-            config_file: CONFIG_FILE.to_owned(),
-            machine_identifier_file: MACHINE_ID_FILE.to_owned(),
-            machine_state_file: MACHINE_STATE_FILE.to_owned(),
-            resources: collect_resources(vm.config())?,
-        };
-        write_json(&temp.path.join(METADATA_FILE), &metadata)?;
-        fs::rename(&temp.path, path)
-            .with_context(|| format!("publish snapshot directory {}", path.display()))?;
-        temp.persist();
-        Ok(())
+        let vm_config = vm.config().clone();
+        run_blocking("publish snapshot", move || draft.publish(&vm_config)).await
     }
     .await;
 
@@ -199,7 +181,15 @@ pub(crate) async fn write(path: &Path, vm: &mut VmInstance) -> Result<()> {
     }
 }
 
-pub(crate) fn read(path: &Path) -> Result<Snapshot> {
+/// Read and validate snapshot metadata without blocking the async runtime.
+///
+/// # Cancellation safety
+/// Cancellation-safe; the read-only blocking task may finish after cancellation.
+pub(crate) async fn read(path: PathBuf) -> Result<Snapshot> {
+    run_blocking("read snapshot", move || read_sync(&path)).await
+}
+
+fn read_sync(path: &Path) -> Result<Snapshot> {
     ensure!(path.is_dir(), "snapshot directory not found: {}", path.display());
 
     let metadata: SnapshotMetadata = read_json(&path.join(METADATA_FILE))?;
@@ -217,7 +207,7 @@ pub(crate) fn read(path: &Path) -> Result<Snapshot> {
 
     let config: SnapshotConfig = read_json(&path.join(CONFIG_FILE))?;
     let vm_config = config.to_vm_config()?;
-    let machine_id = fs::read(path.join(MACHINE_ID_FILE)).context("read machine identifier")?;
+    let machine_id = read_limited(&path.join(MACHINE_ID_FILE), size_limit::MACHINE_ID_BYTES)?;
     ensure!(
         hex_encode(&machine_id) == config.machine_identifier_hex,
         "snapshot machine-id does not match config.json"
@@ -241,6 +231,74 @@ pub(crate) fn read(path: &Path) -> Result<Snapshot> {
 }
 
 // --- helpers ---
+
+struct SnapshotDraft {
+    destination: PathBuf,
+    temp: TempDir,
+}
+
+impl SnapshotDraft {
+    fn prepare(destination: PathBuf, vm_config: &VmConfig) -> Result<Self> {
+        ensure!(
+            !destination.exists(),
+            "snapshot directory already exists: {}",
+            destination.display()
+        );
+        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create snapshot parent {}", parent.display()))?;
+
+        let name = destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("snapshot path must have a UTF-8 directory name")?;
+        let temp_path = parent.join(format!(".{name}.tmp.{}", std::process::id()));
+        ensure!(
+            !temp_path.exists(),
+            "temporary snapshot directory already exists: {}",
+            temp_path.display()
+        );
+        let temp = TempDir::create(temp_path)?;
+        let config = SnapshotConfig::from_vm_config(vm_config)?;
+        write_json(&temp.path.join(CONFIG_FILE), &config)?;
+        let machine_identifier = hex_decode(&config.machine_identifier_hex)?;
+        fs::write(temp.path.join(MACHINE_ID_FILE), machine_identifier)
+            .context("write machine identifier")?;
+        Ok(Self { destination, temp })
+    }
+
+    fn state_path(&self) -> PathBuf {
+        self.temp.path.join(MACHINE_STATE_FILE)
+    }
+
+    fn publish(mut self, vm_config: &VmConfig) -> Result<()> {
+        let metadata = SnapshotMetadata {
+            schema_version: SCHEMA_VERSION,
+            microvm_version: env!("CARGO_PKG_VERSION").to_owned(),
+            created_unix_secs: unix_secs(SystemTime::now())?,
+            host_arch: std::env::consts::ARCH.to_owned(),
+            host_os: std::env::consts::OS.to_owned(),
+            config_file: CONFIG_FILE.to_owned(),
+            machine_identifier_file: MACHINE_ID_FILE.to_owned(),
+            machine_state_file: MACHINE_STATE_FILE.to_owned(),
+            resources: collect_resources(vm_config)?,
+        };
+        write_json(&self.temp.path.join(METADATA_FILE), &metadata)?;
+        fs::rename(&self.temp.path, &self.destination).with_context(|| {
+            format!("publish snapshot directory {}", self.destination.display())
+        })?;
+        self.temp.persist();
+        Ok(())
+    }
+}
+
+async fn run_blocking<T, F>(operation: &'static str, run: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(run).await.with_context(|| format!("{operation} task failed"))?
+}
 
 fn collect_resources(config: &VmConfig) -> Result<Vec<SnapshotResource>> {
     let mut resources = vec![
@@ -309,9 +367,12 @@ impl TempDir {
 }
 
 impl Drop for TempDir {
+    #[allow(clippy::print_stderr)] // Drop cannot return cleanup failures.
     fn drop(&mut self) {
-        if !self.persist {
-            let _ = fs::remove_dir_all(&self.path);
+        if !self.persist
+            && let Err(error) = fs::remove_dir_all(&self.path)
+        {
+            eprintln!("failed to remove temporary snapshot {}: {error}", self.path.display());
         }
     }
 }
@@ -323,8 +384,18 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = read_limited(path, size_limit::JSON_BYTES)?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+}
+
+fn read_limited(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
+    let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    ensure!(bytes.len() as u64 <= max_bytes, "file exceeds {max_bytes} bytes: {}", path.display());
+    Ok(bytes)
 }
 
 fn unix_secs(time: SystemTime) -> Result<u64> {
@@ -365,9 +436,13 @@ fn hex_nibble(byte: u8) -> Result<u8> {
 
 #[cfg(test)]
 // Tests assert on success/failure; unwrap is the idiomatic assertion mechanism.
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 mod tests {
     use super::*;
+    use std::ops::Deref;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
 
     // --- snapshot config ---
 
@@ -415,6 +490,17 @@ mod tests {
         assert!(err.contains("rootfs size changed"), "{err}");
     }
 
+    #[test]
+    fn invariant_oversized_json_rejected_before_parsing() {
+        let dir = test_dir();
+        let path = dir.join(METADATA_FILE);
+        let oversized = usize::try_from(size_limit::JSON_BYTES).unwrap() + 1;
+        fs::write(&path, vec![b' '; oversized]).unwrap();
+
+        let err = read_json::<SnapshotMetadata>(&path).unwrap_err().to_string();
+        assert!(err.contains("file exceeds"), "{err}");
+    }
+
     // --- snapshot read validation ---
 
     #[test]
@@ -456,7 +542,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = read(&dir).unwrap_err().to_string();
+        let err = read_sync(&dir).unwrap_err().to_string();
         assert!(err.contains("machine-id does not match"), "{err}");
     }
 
@@ -499,17 +585,36 @@ mod tests {
         )
         .unwrap();
 
-        let err = read(&dir).unwrap_err().to_string();
+        let err = read_sync(&dir).unwrap_err().to_string();
         assert!(err.contains("external resources"), "{err}");
     }
 
-    fn test_dir() -> PathBuf {
+    struct TestDir(PathBuf);
+
+    impl Deref for TestDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            if let Err(error) = fs::remove_dir_all(&self.0) {
+                eprintln!("failed to remove test directory {}: {error}", self.0.display());
+            }
+        }
+    }
+
+    fn test_dir() -> TestDir {
         let path = std::env::temp_dir().join(format!(
-            "microvm-test-{}-{}",
+            "microvm-test-{}-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+            NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();
-        path
+        TestDir(path)
     }
 }

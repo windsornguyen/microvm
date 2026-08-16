@@ -4,7 +4,10 @@
 //!
 //! This module is the sole FFI boundary with Objective-C. Every function
 //! here touches raw Objective-C pointers and dispatch queues.
-#![allow(unsafe_code, unreachable_pub, clippy::expect_used)]
+//!
+//! Mutating operations continue in VZ if their Rust waiter is cancelled;
+//! [`crate::VmInstance`] exposes that contract to callers.
+#![allow(unsafe_code, clippy::expect_used)]
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -13,6 +16,7 @@ use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::AnyThread;
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2_foundation::{NSArray, NSData, NSError, NSFileHandle, NSString, NSURL};
 use objc2_virtualization::{
     VZDirectoryShare, VZDirectorySharingDeviceConfiguration, VZDiskImageCachingMode,
@@ -24,21 +28,49 @@ use objc2_virtualization::{
     VZVirtioConsoleDeviceSerialPortConfiguration, VZVirtioEntropyDeviceConfiguration,
     VZVirtioFileSystemDeviceConfiguration, VZVirtioNetworkDeviceConfiguration,
     VZVirtioSocketDeviceConfiguration, VZVirtualMachine, VZVirtualMachineConfiguration,
+    VZVirtualMachineState,
 };
+use tokio::sync::watch;
 
 use crate::VzError;
 use crate::machine::VmConfig;
+use delegate::{MachineDelegate, MachineExit};
 
-pub(crate) struct VzHandle {
+mod delegate;
+
+pub(super) struct VzResourceLimits {
+    pub(super) cpus: std::ops::RangeInclusive<usize>,
+    pub(super) memory_bytes: std::ops::RangeInclusive<u64>,
+}
+
+#[must_use]
+pub(super) fn resource_limits() -> VzResourceLimits {
+    // SAFETY: These are immutable Virtualization.framework class properties.
+    unsafe {
+        VzResourceLimits {
+            cpus: VZVirtualMachineConfiguration::minimumAllowedCPUCount()
+                ..=VZVirtualMachineConfiguration::maximumAllowedCPUCount(),
+            memory_bytes: VZVirtualMachineConfiguration::minimumAllowedMemorySize()
+                ..=VZVirtualMachineConfiguration::maximumAllowedMemorySize(),
+        }
+    }
+}
+
+pub(super) struct VzHandle {
     vm: Retained<VZVirtualMachine>,
     queue: DispatchRetained<DispatchQueue>,
+    _delegate: Retained<MachineDelegate>,
+    exit: watch::Sender<Option<MachineExit>>,
 }
 
 struct QueueBoundVm(Retained<VZVirtualMachine>);
+struct QueueBoundDelegate(Retained<MachineDelegate>);
 
 // SAFETY: The wrapper is private and only moved into the VM's serial dispatch
 // queue by `VzHandle::with_completion`.
 unsafe impl Send for QueueBoundVm {}
+// SAFETY: This wrapper is only moved to the VM's serial dispatch queue.
+unsafe impl Send for QueueBoundDelegate {}
 
 impl QueueBoundVm {
     fn submit<F>(self, submit: F, block: &block2::DynBlock<dyn Fn(*mut NSError)>)
@@ -46,6 +78,21 @@ impl QueueBoundVm {
         F: FnOnce(&VZVirtualMachine, &block2::DynBlock<dyn Fn(*mut NSError)>),
     {
         submit(&self.0, block);
+    }
+
+    fn run<T, F>(self, operation: F) -> T
+    where
+        F: FnOnce(&VZVirtualMachine) -> T,
+    {
+        operation(&self.0)
+    }
+
+    fn set_delegate(self, delegate: &MachineDelegate) {
+        // SAFETY: This executes on the VM's serial queue, and the protocol
+        // object remains retained by VzHandle for at least as long as the VM.
+        unsafe {
+            self.0.setDelegate(Some(ProtocolObject::from_ref(delegate)));
+        }
     }
 }
 
@@ -56,11 +103,11 @@ unsafe impl Send for VzHandle {}
 unsafe impl Sync for VzHandle {}
 
 impl VzHandle {
-    pub fn new(config: &VmConfig) -> Result<Self, VzError> {
+    pub(super) fn new(config: &VmConfig) -> Result<Self, VzError> {
         Self::new_with_save_restore(config, false)
     }
 
-    pub fn new_save_restore(config: &VmConfig) -> Result<Self, VzError> {
+    pub(super) fn new_save_restore(config: &VmConfig) -> Result<Self, VzError> {
         Self::new_with_save_restore(config, true)
     }
 
@@ -76,10 +123,15 @@ impl VzHandle {
                 &queue,
             )
         };
-        Ok(Self { vm, queue })
+        let (exit, _) = watch::channel(None);
+        let delegate = MachineDelegate::new(exit.clone());
+        let queue_vm = QueueBoundVm(vm.clone());
+        let queue_delegate = QueueBoundDelegate(delegate.clone());
+        queue.exec_sync(move || queue_vm.set_delegate(&queue_delegate.0));
+        Ok(Self { vm, queue, _delegate: delegate, exit })
     }
 
-    pub async fn start(&self) -> Result<(), VzError> {
+    pub(super) async fn start(&self) -> Result<(), VzError> {
         self.with_completion("start", |vm, block| {
             // SAFETY: `with_completion` executes this call on the VM queue.
             unsafe { vm.startWithCompletionHandler(block) };
@@ -87,28 +139,79 @@ impl VzHandle {
         .await
     }
 
-    pub async fn stop(&self) -> Result<(), VzError> {
+    pub(super) async fn stop(&self) -> Result<(), VzError> {
         self.with_completion("stop", |vm, block| {
             unsafe { vm.stopWithCompletionHandler(block) };
         })
         .await
     }
 
-    pub async fn pause(&self) -> Result<(), VzError> {
+    pub(super) async fn request_stop(&self) -> Result<bool, VzError> {
+        self.on_queue("request_stop", |vm| {
+            // SAFETY: on_queue executes this call on the VM's serial queue.
+            let state = unsafe { vm.state() };
+            if state == VZVirtualMachineState::Stopped {
+                return Ok(false);
+            }
+            // SAFETY: Access and request both happen on the VM queue.
+            if !unsafe { vm.canRequestStop() } {
+                return Err(VzError::InvalidState {
+                    expected: "running and able to request guest shutdown",
+                    actual: framework_state_name(state),
+                });
+            }
+            // SAFETY: The VM can request stop and is accessed on its queue.
+            unsafe { vm.requestStopWithError() }.map_err(|error| VzError::Framework {
+                operation: "request_stop",
+                message: error.localizedDescription().to_string(),
+            })?;
+            Ok(true)
+        })
+        .await?
+    }
+
+    pub(super) async fn wait_for_exit(&self) -> Result<(), VzError> {
+        let mut exit = self.exit.subscribe();
+        loop {
+            let event = exit.borrow_and_update().clone();
+            match event {
+                Some(MachineExit::GuestStopped) => return Ok(()),
+                Some(MachineExit::Failed(message)) => {
+                    return Err(VzError::Framework { operation: "run", message });
+                }
+                None => {}
+            }
+            exit.changed()
+                .await
+                .map_err(|_| VzError::CompletionDropped { operation: "wait_for_exit" })?;
+        }
+    }
+
+    pub(super) fn exit_result(&self) -> Option<Result<(), VzError>> {
+        match self.exit.borrow().clone() {
+            Some(MachineExit::GuestStopped) => Some(Ok(())),
+            Some(MachineExit::Failed(message)) => {
+                Some(Err(VzError::Framework { operation: "run", message }))
+            }
+            None => None,
+        }
+    }
+
+    pub(super) async fn pause(&self) -> Result<(), VzError> {
         self.with_completion("pause", |vm, block| {
             unsafe { vm.pauseWithCompletionHandler(block) };
         })
         .await
     }
 
-    pub async fn resume(&self) -> Result<(), VzError> {
+    pub(super) async fn resume(&self) -> Result<(), VzError> {
         self.with_completion("resume", |vm, block| {
             unsafe { vm.resumeWithCompletionHandler(block) };
         })
         .await
     }
 
-    pub async fn save_state(&self, path: &Path) -> Result<(), VzError> {
+    pub(super) async fn save_state(&self, path: &Path) -> Result<(), VzError> {
         let url_path = path_string(path)?;
         self.with_completion("save_state", move |vm, block| {
             let url = nsurl_from_str(&url_path);
@@ -117,7 +220,7 @@ impl VzHandle {
         .await
     }
 
-    pub async fn restore_state(&self, path: &Path) -> Result<(), VzError> {
+    pub(super) async fn restore_state(&self, path: &Path) -> Result<(), VzError> {
         let url_path = path_string(path)?;
         self.with_completion("restore_state", move |vm, block| {
             let url = nsurl_from_str(&url_path);
@@ -147,9 +250,39 @@ impl VzHandle {
 
         rx.await.map_err(|_| VzError::CompletionDropped { operation })?
     }
+
+    async fn on_queue<T, F>(&self, operation: &'static str, run: F) -> Result<T, VzError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&VZVirtualMachine) -> T + Send + 'static,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let vm = QueueBoundVm(self.vm.clone());
+        self.queue.exec_async(move || {
+            let _ = tx.send(vm.run(run));
+        });
+        rx.await.map_err(|_| VzError::CompletionDropped { operation })
+    }
 }
 
-pub(crate) fn new_machine_identifier() -> Vec<u8> {
+fn framework_state_name(state: VZVirtualMachineState) -> &'static str {
+    match state {
+        VZVirtualMachineState::Stopped => "stopped",
+        VZVirtualMachineState::Running => "running",
+        VZVirtualMachineState::Paused => "paused",
+        VZVirtualMachineState::Error => "error",
+        VZVirtualMachineState::Starting => "starting",
+        VZVirtualMachineState::Pausing => "pausing",
+        VZVirtualMachineState::Resuming => "resuming",
+        VZVirtualMachineState::Stopping => "stopping",
+        VZVirtualMachineState::Saving => "saving",
+        VZVirtualMachineState::Restoring => "restoring",
+        _ => "unknown",
+    }
+}
+
+#[must_use]
+pub(super) fn new_machine_identifier() -> Vec<u8> {
     // SAFETY: Allocates a fresh VZGenericMachineIdentifier and immediately
     // copies its opaque byte representation into Rust-owned memory.
     unsafe { VZGenericMachineIdentifier::new().dataRepresentation().as_bytes_unchecked().to_vec() }
@@ -165,8 +298,7 @@ fn build_vz_config(
     unsafe {
         let vz_config = VZVirtualMachineConfiguration::new();
         vz_config.setCPUCount(config.cpus as usize);
-        let aligned = (config.memory_bytes + (1 << 20) - 1) & !((1 << 20) - 1);
-        vz_config.setMemorySize(aligned);
+        vz_config.setMemorySize(config.aligned_memory_bytes()?);
 
         let boot_loader =
             VZLinuxBootLoader::initWithKernelURL(VZLinuxBootLoader::alloc(), &kernel_url);
@@ -291,8 +423,8 @@ fn block_device(
             VZDiskImageStorageDeviceAttachment::alloc(),
             &url,
             read_only,
-            VZDiskImageCachingMode::Automatic,
-            VZDiskImageSynchronizationMode::Full,
+            VZDiskImageCachingMode::Cached,
+            VZDiskImageSynchronizationMode::Fsync,
         ).map_err(|e| VzError::Framework {
             operation: "disk_attach",
             message: e.localizedDescription().to_string(),

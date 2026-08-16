@@ -8,6 +8,7 @@ members = [
 [workspace.lints.rust]
 unsafe_code = "warn"
 unreachable_pub = "warn"
+unused_must_use = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -2 }
@@ -40,7 +41,7 @@ objc2-virtualization = "0.3"
 block2 = { version = "0.6", features = ["std"] }
 
 # Async runtime
-tokio = { version = "1", features = ["rt", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
 
 # CLI
 clap = { version = "4", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }

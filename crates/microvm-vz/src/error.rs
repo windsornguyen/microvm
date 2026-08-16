@@ -15,6 +15,13 @@ pub enum VzError {
     #[error("virtualization completion dropped during {operation}")]
     CompletionDropped { operation: &'static str },
 
+    #[error("runtime task failed during {operation}: {source}")]
+    TaskJoin {
+        operation: &'static str,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+
     #[error("config validation: {0}")]
     InvalidConfig(String),
 
