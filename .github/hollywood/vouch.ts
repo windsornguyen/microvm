@@ -1,4 +1,4 @@
-import { job, workflow } from "@dedalus-labs/hollywood";
+import { job, unsafeShell, workflow } from "@dedalus-labs/hollywood";
 import { checkoutAction } from "./actions";
 
 const checkVouchedContributor = String.raw`set -euo pipefail
@@ -97,7 +97,7 @@ export const vouch = workflow({
 						VOUCH_BOOTSTRAP_MAINTAINERS: "windsornguyen",
 						PR_AUTHOR: "${{ github.event.pull_request.user.login }}",
 					},
-					run: checkVouchedContributor,
+					run: unsafeShell(checkVouchedContributor),
 				},
 			],
 		}),

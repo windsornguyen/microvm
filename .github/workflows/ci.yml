@@ -24,14 +24,33 @@ jobs:
           components: rustfmt, clippy
       - name: Format
         run: cargo fmt --check
+        shell: bash
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
+        shell: bash
       - name: Test
         run: cargo test --workspace
+        shell: bash
       - name: Doc
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+        shell: bash
+      - name: Build release
+        run: cargo build --release
+        shell: bash
+      - name: Check binary size
+        run: |-
+          node --input-type=module --eval '
+          import { statSync } from "node:fs";
+
+          const path = process.argv[1];
+          const limit = Number(process.argv[2]);
+          const size = statSync(path).size;
+          if (size > limit) throw new Error(path + " is " + size + " bytes; limit is " + limit);
+          console.log(path + ": " + size + " bytes");
+          ' target/release/microvm 1048576
+        shell: bash
   actionlint:
     name: Actionlint
     if: github.repository == 'windsornguyen/microvm' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

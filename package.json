@@ -2,11 +2,13 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"actions": "node --experimental-strip-types gha/bundle.ts",
-		"generate": "hollywood generate gha/*.ts"
+		"actions": "hollywood build",
+		"generate": "hollywood generate --source-root .github/hollywood"
 	},
 	"devDependencies": {
-		"@dedalus-labs/hollywood": "^0.0.1-alpha.1",
-		"esbuild": "^0.25.0"
+		"@dedalus-labs/hollywood": "0.0.3"
+	},
+	"allowScripts": {
+		"esbuild@0.28.1": true
 	}
 }
