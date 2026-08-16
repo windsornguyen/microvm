@@ -1,15 +1,8 @@
-import { command, job, workflow } from "@dedalus-labs/hollywood";
+import { command, job, uses, workflow } from "@dedalus-labs/hollywood";
 import { checkoutAction, ghReleaseAction, rustToolchainAction } from "./actions";
+import { checksumArchive } from "./artifact-actions";
 
 const archive = "microvm-darwin-arm64.tar.gz";
-const checksumScript = String.raw`
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-
-const archive = process.argv[1];
-const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
-writeFileSync(archive + ".sha256", digest + "\n");
-`;
 
 export const binary = workflow({
 	name: "Binary",
@@ -75,10 +68,7 @@ export const binary = workflow({
 				},
 				{
 					name: "Checksum",
-					run: command({
-						file: "node",
-						args: ["--input-type=module", "--eval", checksumScript, archive],
-					}),
+					...uses(checksumArchive, { with: { archive } }),
 				},
 				{
 					name: "Upload",

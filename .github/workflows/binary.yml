@@ -34,17 +34,10 @@ jobs:
       - name: Archive
         run: tar -C dist -czf ../microvm-darwin-arm64.tar.gz .
         shell: bash
-      - name: Checksum
-        run: |-
-          node --input-type=module --eval '
-          import { createHash } from "node:crypto";
-          import { readFileSync, writeFileSync } from "node:fs";
-
-          const archive = process.argv[1];
-          const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
-          writeFileSync(archive + ".sha256", digest + "\n");
-          ' microvm-darwin-arm64.tar.gz
-        shell: bash
+      - name: Checksum archive
+        uses: ./.github/actions/checksum-archive
+        with:
+          archive: microvm-darwin-arm64.tar.gz
       - name: Upload
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
         with:

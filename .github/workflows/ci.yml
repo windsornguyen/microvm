@@ -39,18 +39,11 @@ jobs:
       - name: Build release
         run: cargo build --release
         shell: bash
-      - name: Check binary size
-        run: |-
-          node --input-type=module --eval '
-          import { statSync } from "node:fs";
-
-          const path = process.argv[1];
-          const limit = Number(process.argv[2]);
-          const size = statSync(path).size;
-          if (size > limit) throw new Error(path + " is " + size + " bytes; limit is " + limit);
-          console.log(path + ": " + size + " bytes");
-          ' target/release/microvm 1048576
-        shell: bash
+      - name: Check file size
+        uses: ./.github/actions/check-file-size
+        with:
+          file: target/release/microvm
+          max-bytes: "1048576"
   actionlint:
     name: Actionlint
     if: github.repository == 'windsornguyen/microvm' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

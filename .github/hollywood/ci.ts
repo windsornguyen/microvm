@@ -1,17 +1,9 @@
-import { command, job, workflow } from "@dedalus-labs/hollywood";
+import { command, job, uses, workflow } from "@dedalus-labs/hollywood";
 import { actionlintAction, checkoutAction, rustToolchainAction } from "./actions";
+import { checkFileSize } from "./artifact-actions";
 import { trustedCiRun } from "./guards";
 
 const maxBinaryBytes = 1024 * 1024;
-const checkBinarySize = String.raw`
-import { statSync } from "node:fs";
-
-const path = process.argv[1];
-const limit = Number(process.argv[2]);
-const size = statSync(path).size;
-if (size > limit) throw new Error(path + " is " + size + " bytes; limit is " + limit);
-console.log(path + ": " + size + " bytes");
-`;
 
 export const ci = workflow({
 	name: "CI",
@@ -55,19 +47,12 @@ export const ci = workflow({
 					name: "Build release",
 					run: command({ file: "cargo", args: ["build", "--release"] }),
 				},
-				{
-					name: "Check binary size",
-					run: command({
-						file: "node",
-						args: [
-							"--input-type=module",
-							"--eval",
-							checkBinarySize,
-							"target/release/microvm",
-							String(maxBinaryBytes),
-						],
-					}),
-				},
+				uses(checkFileSize, {
+					with: {
+						file: "target/release/microvm",
+						maxBytes: String(maxBinaryBytes),
+					},
+				}),
 			],
 		}),
 		actionlint: job({
