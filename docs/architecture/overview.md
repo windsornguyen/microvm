@@ -1,15 +1,17 @@
 # Architecture
 
-## Crates
+## Backends
 
 ```
-microvm/                CLI binary
-crates/microvm-vz/      Virtualization.framework bindings
+src/                    CLI, host policy, snapshot orchestration
+backend/vz/             macOS Virtualization.framework backend
+backend/kvm/            Linux KVM backend boundary
 ```
 
 `microvm-vz` wraps Apple's Objective-C `VZVirtualMachine` API in async Rust
 via `objc2-virtualization`. The CLI crate handles argument parsing, host
-resource validation, and snapshot persistence.
+resource validation, and snapshot persistence. The KVM backend is not yet a
+workspace crate; no stub implementation is exposed as a working backend.
 
 ## Stack
 
