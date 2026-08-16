@@ -28450,11 +28450,14 @@ var runAction = async (scriptAction, options) => {
     input: parseActionInputs(scriptAction.inputs, options.with)
   });
 };
-var stringInput = (definition) => ({
+var pathInput = (definition) => ({
   ...definition,
-  kind: "string"
+  kind: "path"
 });
-var stringOutput = (definition) => definition;
+var integerInput = (definition) => ({
+  ...definition,
+  kind: "integer"
+});
 var parseActionInputs = (inputs, values) => {
   const rawValues = values;
   const parsed = /* @__PURE__ */ new Map();
@@ -28780,6 +28783,11 @@ var errorMessage = (error52) => {
   return String(error52);
 };
 var escapeHtml = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+// .github/hollywood/artifact-actions.ts
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { stat as stat2, writeFile as writeFile2 } from "node:fs/promises";
 
 // node_modules/@actions/expressions/dist/ast.js
 var Expr = class {
@@ -46676,190 +46684,48 @@ var runnerContractSchema = external_exports.strictObject({
 });
 var defaultGitHubApiUrl = new URL("https://api.github.com/");
 var jitResponseSchema = external_exports.object({ encoded_jit_config: external_exports.string() });
-var InvalidWorkflowFilenameError = class extends Error {
-  filename;
-  reason;
-  constructor(filename, reason) {
-    super(`invalid workflow filename ${JSON.stringify(filename)}: ${reason}`);
-    this.name = "InvalidWorkflowFilenameError";
-    this.filename = filename;
-    this.reason = reason;
-  }
-};
-var workflowFilenameKey = /* @__PURE__ */ Symbol.for("@dedalus-labs/hollywood/workflow-filename");
-var workflow = (definition, options) => {
-  if (options === void 0) return definition;
-  assertWorkflowFilename(options.filename);
-  const configured = { ...definition };
-  Object.defineProperty(configured, workflowFilenameKey, { value: options.filename });
-  return configured;
-};
-var job = (definition) => definition;
-var generateUsesStep = (_action, options) => {
-  const { uses: actionPath, with: withValues = {}, ...step } = options;
-  const withInputs = /* @__PURE__ */ new Map();
-  const providedInputs = withValues;
-  for (const [name, value] of Object.entries(providedInputs)) {
-    const githubName = uniqueGitHubName(withInputs, name, "input");
-    withInputs.set(githubName, value);
-  }
-  return {
-    ...step,
-    uses: actionPath,
-    ...withInputs.size === 0 ? {} : { with: mapToObject2(withInputs) }
-  };
-};
-var uses = (action2, options) => {
-  const { actionsDir = ".github/actions", name = action2.name, ...step } = options;
-  return generateUsesStep(action2, {
-    ...step,
-    name,
-    uses: localActionUsesPath(action2, actionsDir)
-  });
-};
-var uniqueGitHubName = (values, sourceName, kind) => {
-  const githubName = toGitHubName(sourceName);
-  if (values.has(githubName)) throw new Error(`duplicate GitHub ${kind} name: ${githubName}`);
-  return githubName;
-};
-var mapToObject2 = (values) => Object.fromEntries(values);
-var localActionUsesPath = (action2, actionsDir) => {
-  if (action2.localActionPath === void 0) throw new Error(`localActionPath is required to derive workflow uses path: ${action2.name}`);
-  assertRelativeGeneratedPath(action2.localActionPath, "action directory");
-  const directory = trimSlashes(actionsDir);
-  assertRelativeGeneratedPath(directory, "actions directory");
-  return `./${directory}/${action2.localActionPath}`;
-};
-var assertRelativeGeneratedPath = (value, kind) => {
-  const segments = value.split("/");
-  if (value.length === 0 || value.startsWith("/") || value.includes("\\") || segments.some((segment) => segment === "" || segment === "." || segment === "..")) throw new Error(`invalid ${kind}: ${value}`);
-};
-var assertWorkflowFilename = (filename) => {
-  if (filename.length === 0) throw new InvalidWorkflowFilenameError(filename, "filename must not be empty");
-  if (filename !== filename.trim()) throw new InvalidWorkflowFilenameError(filename, "leading or trailing whitespace is not allowed");
-  if (filename.includes("/") || filename.includes("\\")) throw new InvalidWorkflowFilenameError(filename, "filename must not contain directories");
-  const extension = filename.slice(filename.lastIndexOf("."));
-  if (extension !== ".yml" && extension !== ".yaml") throw new InvalidWorkflowFilenameError(filename, "extension must be .yml or .yaml");
-  const stem = filename.slice(0, -extension.length);
-  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(stem)) throw new InvalidWorkflowFilenameError(filename, "name must contain only portable ASCII letters, numbers, dots, hyphens, or underscores");
-};
-var trimSlashes = (value) => value.replace(/^\/+|\/+$/g, "");
 
-// .github/hollywood/actions.ts
-var checkoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
-var rustToolchainAction = "dtolnay/rust-toolchain@stable";
-var releasePleaseAction = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7";
-
-// .github/hollywood/publish.ts
-var CRATES = ["microvm-vz", "microvm"];
-var MAX_ATTEMPTS = 3;
-var BASE_DELAY_MS = 5e3;
-var MAX_DELAY_MS = 15e3;
-var publishCrate = async (exec2, log, crate) => {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      await exec2("cargo", ["publish", "-p", crate, "--no-verify"]);
-      log.info(`published ${crate}`);
-      return;
-    } catch (err) {
-      if (attempt === MAX_ATTEMPTS) {
-        throw new Error(
-          `failed to publish ${crate} after ${MAX_ATTEMPTS} attempts: ${err}`
-        );
-      }
-      const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
-      log.info(
-        `publish ${crate} attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying in ${delay}ms`
-      );
-      await new Promise((resolve2) => setTimeout(resolve2, delay));
-    }
-  }
-};
-var publishCrates = action({
-  name: "Publish crates to crates.io",
-  description: "Publish workspace crates in dependency order with bounded exponential backoff.",
-  localActionPath: "publish-crates",
+// .github/hollywood/artifact-actions.ts
+var checksumArchive = action({
+  name: "Checksum archive",
+  description: "Write the SHA-256 digest for a release archive.",
+  localActionPath: "checksum-archive",
   inputs: {
-    token: stringInput({ description: "crates.io registry token." })
+    archive: pathInput({ description: "Release archive to checksum." })
   },
-  outputs: {
-    published: stringOutput({
-      description: "Comma-separated list of published crates."
-    })
-  },
-  run: async ({ exec: exec2, input, log }) => {
-    const published = [];
-    for (const crate of CRATES) {
-      await publishCrate(
-        (cmd, args, opts) => exec2(cmd, args, {
-          ...opts,
-          env: { ...opts?.env, CARGO_REGISTRY_TOKEN: input.token }
-        }),
-        log,
-        crate
-      );
-      published.push(crate);
-    }
-    return { published: published.join(",") };
+  outputs: {},
+  run: async ({ input, log }) => {
+    const hash2 = createHash("sha256");
+    for await (const chunk of createReadStream(input.archive)) hash2.update(chunk);
+    const digest = hash2.digest("hex");
+    const checksum = `${input.archive}.sha256`;
+    await writeFile2(checksum, `${digest}
+`, "ascii");
+    log.info(`${checksum}: ${digest}`);
+    return {};
   }
 });
-var release = workflow({
-  name: "Release",
-  on: {
-    push: { branches: ["main"] },
-    workflow_dispatch: {}
+var checkFileSize = action({
+  name: "Check file size",
+  description: "Require a file to fit within a byte limit.",
+  localActionPath: "check-file-size",
+  inputs: {
+    file: pathInput({ description: "File to measure." }),
+    maxBytes: integerInput({ description: "Maximum permitted size in bytes." })
   },
-  permissions: { contents: "read" },
-  env: {
-    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  },
-  jobs: {
-    "release-please": job({
-      name: "Release Please",
-      "runs-on": "ubuntu-latest",
-      permissions: {
-        contents: "write",
-        "pull-requests": "write"
-      },
-      outputs: {
-        release_created: "${{ steps.release.outputs.release_created }}",
-        tag_name: "${{ steps.release.outputs.tag_name }}"
-      },
-      steps: [
-        {
-          uses: checkoutAction,
-          with: { "persist-credentials": false }
-        },
-        {
-          id: "release",
-          name: "Run release-please",
-          uses: releasePleaseAction,
-          with: {
-            token: "${{ secrets.GITHUB_TOKEN }}",
-            "config-file": "release-please-config.json",
-            "manifest-file": ".release-please-manifest.json"
-          }
-        }
-      ]
-    }),
-    publish: job({
-      name: "Publish to crates.io",
-      needs: "release-please",
-      if: "needs.release-please.outputs.release_created == 'true'",
-      "runs-on": "ubuntu-latest",
-      steps: [
-        { uses: checkoutAction, with: { "fetch-depth": 0 } },
-        { uses: rustToolchainAction },
-        uses(publishCrates, {
-          with: { token: "${{ secrets.CARGO_REGISTRY_TOKEN }}" }
-        })
-      ]
-    })
+  outputs: {},
+  run: async ({ input, log }) => {
+    const size = (await stat2(input.file)).size;
+    if (size > input.maxBytes) {
+      throw new Error(`${input.file} is ${size} bytes; limit is ${input.maxBytes}`);
+    }
+    log.info(`${input.file}: ${size} bytes`);
+    return {};
   }
 });
 
-// .github/actions/publish-crates/src/index.ts
-void runGitHubAction(publishCrates);
+// .github/actions/checksum-archive/src/index.ts
+void runGitHubAction(checksumArchive);
 /*! Bundled license information:
 
 undici/lib/web/fetch/body.js:

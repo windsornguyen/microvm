@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     // RunLoop for GCD dispatch.
     let (done_tx, done_rx) = std::sync::mpsc::channel::<Result<()>>();
 
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
         #[allow(clippy::expect_used)] // startup: fail fast if tokio can't init
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
         }
     });
 
-    loop {
+    let result = loop {
         // SAFETY: Runs the main run loop in the default mode for a bounded
         // interval; no borrowed Rust data crosses the FFI boundary.
         unsafe {
@@ -44,8 +44,21 @@ fn main() -> Result<()> {
                 u8::from(false),
             );
         }
-        if let Ok(result) = done_rx.try_recv() {
-            return result;
+        match done_rx.try_recv() {
+            Ok(result) => break result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                break Err(anyhow::anyhow!("microvm worker exited without returning a result"));
+            }
         }
+    };
+    join_worker(worker)?;
+    result
+}
+
+fn join_worker(worker: std::thread::JoinHandle<()>) -> Result<()> {
+    match worker.join() {
+        Ok(()) => Ok(()),
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }

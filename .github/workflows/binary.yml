@@ -18,15 +18,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release
+        shell: bash
       - name: Sign
         run: codesign --sign - --entitlements entitlements.plist --force target/release/microvm
-      - name: Package
-        run: |-
-          mkdir -p dist
-          cp target/release/microvm dist/
-          cp entitlements.plist dist/
-          cd dist && tar czf ../microvm-darwin-arm64.tar.gz .
-          shasum -a 256 ../microvm-darwin-arm64.tar.gz | cut -d' ' -f1 > ../microvm-darwin-arm64.tar.gz.sha256
+        shell: bash
+      - name: Prepare package
+        run: mkdir -p dist
+        shell: bash
+      - name: Copy binary
+        run: cp target/release/microvm dist/
+        shell: bash
+      - name: Copy entitlements
+        run: cp entitlements.plist dist/
+        shell: bash
+      - name: Archive
+        run: tar -C dist -czf ../microvm-darwin-arm64.tar.gz .
+        shell: bash
+      - name: Checksum archive
+        uses: ./.github/actions/checksum-archive
+        with:
+          archive: microvm-darwin-arm64.tar.gz
       - name: Upload
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
         with:

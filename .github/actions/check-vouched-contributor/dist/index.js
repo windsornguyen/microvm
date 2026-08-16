@@ -28454,7 +28454,14 @@ var stringInput = (definition) => ({
   ...definition,
   kind: "string"
 });
-var stringOutput = (definition) => definition;
+var summaryCode = (value) => ({
+  format: "code",
+  value
+});
+var summaryText = (value) => ({
+  format: "text",
+  value
+});
 var parseActionInputs = (inputs, values) => {
   const rawValues = values;
   const parsed = /* @__PURE__ */ new Map();
@@ -28780,6 +28787,9 @@ var errorMessage = (error52) => {
   return String(error52);
 };
 var escapeHtml = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+// .github/hollywood/contributor-actions.ts
+import { readFile as readFile2 } from "node:fs/promises";
 
 // node_modules/@actions/expressions/dist/ast.js
 var Expr = class {
@@ -46676,190 +46686,75 @@ var runnerContractSchema = external_exports.strictObject({
 });
 var defaultGitHubApiUrl = new URL("https://api.github.com/");
 var jitResponseSchema = external_exports.object({ encoded_jit_config: external_exports.string() });
-var InvalidWorkflowFilenameError = class extends Error {
-  filename;
-  reason;
-  constructor(filename, reason) {
-    super(`invalid workflow filename ${JSON.stringify(filename)}: ${reason}`);
-    this.name = "InvalidWorkflowFilenameError";
-    this.filename = filename;
-    this.reason = reason;
-  }
-};
-var workflowFilenameKey = /* @__PURE__ */ Symbol.for("@dedalus-labs/hollywood/workflow-filename");
-var workflow = (definition, options) => {
-  if (options === void 0) return definition;
-  assertWorkflowFilename(options.filename);
-  const configured = { ...definition };
-  Object.defineProperty(configured, workflowFilenameKey, { value: options.filename });
-  return configured;
-};
-var job = (definition) => definition;
-var generateUsesStep = (_action, options) => {
-  const { uses: actionPath, with: withValues = {}, ...step } = options;
-  const withInputs = /* @__PURE__ */ new Map();
-  const providedInputs = withValues;
-  for (const [name, value] of Object.entries(providedInputs)) {
-    const githubName = uniqueGitHubName(withInputs, name, "input");
-    withInputs.set(githubName, value);
-  }
-  return {
-    ...step,
-    uses: actionPath,
-    ...withInputs.size === 0 ? {} : { with: mapToObject2(withInputs) }
-  };
-};
-var uses = (action2, options) => {
-  const { actionsDir = ".github/actions", name = action2.name, ...step } = options;
-  return generateUsesStep(action2, {
-    ...step,
-    name,
-    uses: localActionUsesPath(action2, actionsDir)
-  });
-};
-var uniqueGitHubName = (values, sourceName, kind) => {
-  const githubName = toGitHubName(sourceName);
-  if (values.has(githubName)) throw new Error(`duplicate GitHub ${kind} name: ${githubName}`);
-  return githubName;
-};
-var mapToObject2 = (values) => Object.fromEntries(values);
-var localActionUsesPath = (action2, actionsDir) => {
-  if (action2.localActionPath === void 0) throw new Error(`localActionPath is required to derive workflow uses path: ${action2.name}`);
-  assertRelativeGeneratedPath(action2.localActionPath, "action directory");
-  const directory = trimSlashes(actionsDir);
-  assertRelativeGeneratedPath(directory, "actions directory");
-  return `./${directory}/${action2.localActionPath}`;
-};
-var assertRelativeGeneratedPath = (value, kind) => {
-  const segments = value.split("/");
-  if (value.length === 0 || value.startsWith("/") || value.includes("\\") || segments.some((segment) => segment === "" || segment === "." || segment === "..")) throw new Error(`invalid ${kind}: ${value}`);
-};
-var assertWorkflowFilename = (filename) => {
-  if (filename.length === 0) throw new InvalidWorkflowFilenameError(filename, "filename must not be empty");
-  if (filename !== filename.trim()) throw new InvalidWorkflowFilenameError(filename, "leading or trailing whitespace is not allowed");
-  if (filename.includes("/") || filename.includes("\\")) throw new InvalidWorkflowFilenameError(filename, "filename must not contain directories");
-  const extension = filename.slice(filename.lastIndexOf("."));
-  if (extension !== ".yml" && extension !== ".yaml") throw new InvalidWorkflowFilenameError(filename, "extension must be .yml or .yaml");
-  const stem = filename.slice(0, -extension.length);
-  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(stem)) throw new InvalidWorkflowFilenameError(filename, "name must contain only portable ASCII letters, numbers, dots, hyphens, or underscores");
-};
-var trimSlashes = (value) => value.replace(/^\/+|\/+$/g, "");
 
-// .github/hollywood/actions.ts
-var checkoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
-var rustToolchainAction = "dtolnay/rust-toolchain@stable";
-var releasePleaseAction = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7";
-
-// .github/hollywood/publish.ts
-var CRATES = ["microvm-vz", "microvm"];
-var MAX_ATTEMPTS = 3;
-var BASE_DELAY_MS = 5e3;
-var MAX_DELAY_MS = 15e3;
-var publishCrate = async (exec2, log, crate) => {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      await exec2("cargo", ["publish", "-p", crate, "--no-verify"]);
-      log.info(`published ${crate}`);
-      return;
-    } catch (err) {
-      if (attempt === MAX_ATTEMPTS) {
-        throw new Error(
-          `failed to publish ${crate} after ${MAX_ATTEMPTS} attempts: ${err}`
-        );
-      }
-      const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
-      log.info(
-        `publish ${crate} attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying in ${delay}ms`
-      );
-      await new Promise((resolve2) => setTimeout(resolve2, delay));
+// .github/hollywood/contributor-actions.ts
+var normalizeHandle = (handle) => handle.trim().toLowerCase().replace(/^@/, "").replace(/^github:/, "");
+var decideVouch = (author, bootstrapMaintainers, vouchedFile) => {
+  const authorHandle = normalizeHandle(author);
+  if (vouchedFile === void 0) {
+    const bootstrap = new Set(
+      bootstrapMaintainers.split(/[,\s]+/).map(normalizeHandle).filter(Boolean)
+    );
+    return bootstrap.has(authorHandle) ? { status: "passed", reason: `@${author} is a bootstrap maintainer` } : { status: "blocked", reason: "VOUCHED.td not present on trusted base" };
+  }
+  const authorKey = `github:${authorHandle}`;
+  let vouched = false;
+  for (const rawLine of vouchedFile.split("\n")) {
+    const line = rawLine.replace(/\r$/, "").trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const [token, ...reasonParts] = line.split(/\s+/);
+    const denounced = token.startsWith("-");
+    const rawHandle = (denounced ? token.slice(1) : token).replace(/^@/, "");
+    const handle = rawHandle.includes(":") ? rawHandle.toLowerCase() : `github:${rawHandle.toLowerCase()}`;
+    if (handle !== authorKey) continue;
+    if (denounced) {
+      const reason = reasonParts.join(" ") || "no reason recorded";
+      return { status: "blocked", reason: `@${author} is denounced: ${reason}` };
     }
+    vouched = true;
+  }
+  return vouched ? { status: "passed", reason: `@${author} is listed in VOUCHED.td` } : { status: "blocked", reason: `@${author} is not listed in VOUCHED.td` };
+};
+var readVouchedFile = async () => {
+  try {
+    return await readFile2("VOUCHED.td", "utf8");
+  } catch (error52) {
+    if (typeof error52 === "object" && error52 !== null && "code" in error52 && error52.code === "ENOENT") {
+      return void 0;
+    }
+    throw error52;
   }
 };
-var publishCrates = action({
-  name: "Publish crates to crates.io",
-  description: "Publish workspace crates in dependency order with bounded exponential backoff.",
-  localActionPath: "publish-crates",
+var checkVouchedContributor = action({
+  name: "Check vouched contributor",
+  description: "Require a pull request author to be vouched on the trusted base.",
+  localActionPath: "check-vouched-contributor",
   inputs: {
-    token: stringInput({ description: "crates.io registry token." })
-  },
-  outputs: {
-    published: stringOutput({
-      description: "Comma-separated list of published crates."
+    author: stringInput({ description: "Pull request author." }),
+    bootstrapMaintainers: stringInput({
+      description: "Maintainers trusted before VOUCHED.td exists.",
+      default: ""
     })
   },
-  run: async ({ exec: exec2, input, log }) => {
-    const published = [];
-    for (const crate of CRATES) {
-      await publishCrate(
-        (cmd, args, opts) => exec2(cmd, args, {
-          ...opts,
-          env: { ...opts?.env, CARGO_REGISTRY_TOKEN: input.token }
-        }),
-        log,
-        crate
-      );
-      published.push(crate);
-    }
-    return { published: published.join(",") };
-  }
-});
-var release = workflow({
-  name: "Release",
-  on: {
-    push: { branches: ["main"] },
-    workflow_dispatch: {}
-  },
-  permissions: { contents: "read" },
-  env: {
-    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  },
-  jobs: {
-    "release-please": job({
-      name: "Release Please",
-      "runs-on": "ubuntu-latest",
-      permissions: {
-        contents: "write",
-        "pull-requests": "write"
-      },
-      outputs: {
-        release_created: "${{ steps.release.outputs.release_created }}",
-        tag_name: "${{ steps.release.outputs.tag_name }}"
-      },
-      steps: [
-        {
-          uses: checkoutAction,
-          with: { "persist-credentials": false }
-        },
-        {
-          id: "release",
-          name: "Run release-please",
-          uses: releasePleaseAction,
-          with: {
-            token: "${{ secrets.GITHUB_TOKEN }}",
-            "config-file": "release-please-config.json",
-            "manifest-file": ".release-please-manifest.json"
-          }
-        }
-      ]
-    }),
-    publish: job({
-      name: "Publish to crates.io",
-      needs: "release-please",
-      if: "needs.release-please.outputs.release_created == 'true'",
-      "runs-on": "ubuntu-latest",
-      steps: [
-        { uses: checkoutAction, with: { "fetch-depth": 0 } },
-        { uses: rustToolchainAction },
-        uses(publishCrates, {
-          with: { token: "${{ secrets.CARGO_REGISTRY_TOKEN }}" }
-        })
-      ]
-    })
+  outputs: {},
+  run: async ({ input, log, summary: summary2 }) => {
+    const decision = decideVouch(
+      input.author,
+      input.bootstrapMaintainers,
+      await readVouchedFile()
+    );
+    await summary2.table("Vouch", [
+      { label: "Contributor", value: summaryCode(`@${input.author}`) },
+      { label: "Decision", value: summaryText(decision.reason) }
+    ]);
+    if (decision.status === "blocked") throw new Error(decision.reason);
+    log.info(decision.reason);
+    return {};
   }
 });
 
-// .github/actions/publish-crates/src/index.ts
-void runGitHubAction(publishCrates);
+// .github/actions/check-vouched-contributor/src/index.ts
+void runGitHubAction(checkVouchedContributor);
 /*! Bundled license information:
 
 undici/lib/web/fetch/body.js:
