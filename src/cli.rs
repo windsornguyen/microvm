@@ -52,9 +52,6 @@ struct BootArgs {
     nested_virt: bool,
     #[arg(long, alias = "checkpoint")]
     snapshot: Option<PathBuf>,
-    /// Bypass host resource safety checks.
-    #[arg(long)]
-    force: bool,
 }
 
 #[derive(Args)]
@@ -63,9 +60,6 @@ struct RestoreArgs {
     from: PathBuf,
     #[arg(long)]
     paused: bool,
-    /// Bypass host resource safety checks.
-    #[arg(long)]
-    force: bool,
 }
 
 // --- public entrypoints ---
@@ -97,7 +91,7 @@ async fn boot(args: BootArgs) -> Result<()> {
         args.nested_virt,
         None,
     );
-    let mut vm = create_vm(config, !args.force).await?;
+    let mut vm = create_vm(config).await?;
 
     println!("booting: {} cpus, {} MiB", args.cpus, args.memory);
     if args.snapshot.is_some() {
@@ -123,7 +117,7 @@ async fn boot(args: BootArgs) -> Result<()> {
 async fn restore(args: RestoreArgs) -> Result<()> {
     let snap = snapshot::read(args.from.clone()).await?;
     let config = snap.config.to_vm_config()?;
-    let mut vm = create_vm(config, !args.force).await?;
+    let mut vm = create_vm(config).await?;
 
     println!("restoring snapshot: {}", args.from.display());
     vm.restore(&snap.machine_state).await?;
@@ -144,11 +138,9 @@ async fn restore(args: RestoreArgs) -> Result<()> {
 
 // --- helpers ---
 
-async fn create_vm(config: VmConfig, enforce_host_limits: bool) -> Result<VmInstance> {
+async fn create_vm(config: VmConfig) -> Result<VmInstance> {
     tokio::task::spawn_blocking(move || {
-        if enforce_host_limits {
-            validate_resources(config.cpus, memory_mib(config.memory_bytes)?)?;
-        }
+        validate_resources(config.cpus, memory_mib(config.memory_bytes)?)?;
         VmInstance::new(config).map_err(anyhow::Error::from)
     })
     .await
@@ -260,8 +252,7 @@ fn validate_resources(cpus: u32, memory_mib: u32) -> Result<()> {
     ensure!(
         requested <= limit,
         "requested {memory_mib} MiB exceeds {}% of host memory \
-         ({host_gib} GiB, limit {limit_mib} MiB). \
-         Use --force to override.",
+         ({host_gib} GiB, limit {limit_mib} MiB)",
         resource_limit::PERCENT,
     );
 
@@ -271,8 +262,7 @@ fn validate_resources(cpus: u32, memory_mib: u32) -> Result<()> {
     ensure!(
         u64::from(cpus) <= limit,
         "requested {cpus} vCPUs exceeds {}% of host CPUs \
-         ({host_cpus} cores, limit {limit}). \
-         Use --force to override.",
+         ({host_cpus} cores, limit {limit})",
         resource_limit::PERCENT,
     );
     Ok(())
@@ -377,7 +367,6 @@ mod tests {
         assert_eq!(args.cpus, 2);
         assert_eq!(args.memory, 512);
         assert!(!args.nested_virt);
-        assert!(!args.force);
     }
 
     #[test]
@@ -419,25 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn invariant_force_flag_parses() {
-        let cli = Cli::try_parse_from([
-            "microvm",
-            "boot",
-            "--kernel",
-            "vmlinuz",
-            "--rootfs",
-            "rootfs.ext4",
-            "--memory",
-            "999999",
-            "--force",
-        ])
-        .unwrap();
-        let Command::Boot(args) = cli.command else { panic!("expected boot") };
-        assert!(args.force);
-        assert_eq!(args.memory, 999_999);
-    }
-
-    #[test]
     fn design_old_virtualization_flag_rejected() {
         assert!(
             Cli::try_parse_from([
@@ -467,11 +437,6 @@ mod tests {
 
         assert!(validate_resources(2, 512).is_ok());
         assert!(validate_resources(2, host_mib).is_err());
-
-        let just_over = host_mem * resource_limit::NUMERATOR / resource_limit::DENOMINATOR;
-        let just_over_mib = u32::try_from(just_over / (1024 * 1024)).unwrap() + 1;
-        let err = validate_resources(2, just_over_mib).unwrap_err().to_string();
-        assert!(err.contains("--force"), "{err}");
     }
 
     #[test]
@@ -487,7 +452,6 @@ mod tests {
         let host_cpus = host_cpu_count().expect("sysctl hw.ncpu");
         let err = validate_resources(host_cpus + 1, 512).unwrap_err().to_string();
         assert!(err.contains("vCPUs"), "{err}");
-        assert!(err.contains("--force"), "{err}");
     }
 
     #[test]
