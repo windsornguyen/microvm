@@ -28,6 +28,18 @@ codesign --sign - --entitlements entitlements.plist --force target/debug/microvm
 git switch -c fix/my-first-contribution
 ```
 
+For dependent changes, use GitHub's native stacked PR workflow:
+
+```bash
+gh extension install github/gh-stack
+gh stack init
+gh stack add feat/next-layer
+gh stack submit
+```
+
+Keep the stack linear. Amend the owning layer, then run
+`gh stack rebase --upstack` before submitting it again.
+
 ### 4. Make your changes
 
 ```bash
